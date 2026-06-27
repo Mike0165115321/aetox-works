@@ -5,6 +5,7 @@ import logging
 from langgraph.graph import StateGraph, START, END
 from src.supervisor import AgentState, AGENT_REGISTRY
 from src.llm.client import call_llm
+from src.config.agent_configs import get_system_prompt
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
 log = logging.getLogger("aetox")
@@ -73,14 +74,34 @@ def final_aggregator(state: AgentState) -> AgentState:
     }
 
 
-def make_placeholder(name: str, desc: str):
-    """สร้าง placeholder agent — แก้ไขภายหลัง"""
+def make_agent(name: str, desc: str):
+    """สร้าง agent node — ใช้ prompt จาก agent_configs"""
+    prompt = get_system_prompt(name)
+    if not prompt:
+        prompt = f"คุณคือ {name} Agent: {desc}"
+
     def agent_node(state: AgentState) -> dict:
-        log.info("Agent %s received task: %s", name, state.get("input", ""))
-        return {
-            "results": {name: f"[{name}] Pending implementation: {desc}"},
-            "messages": [("system", f"{name}: not implemented yet")],
-        }
+        user_input = state.get("input", "")
+        log.info("Agent %s received: %s", name, user_input[:80])
+
+        # ถ้ามี prompt จริง → เรียก LLM ด้วย system prompt
+        try:
+            reply = call_llm(
+                f"คำขอ: {user_input}\n\nตอบกลับเป็นสรุปผลงานของคุณ",
+                system_prompt=prompt,
+            )
+            log.info("Agent %s responded (%d chars)", name, len(reply))
+            return {
+                "results": {name: reply},
+                "messages": [("system", f"{name}: {reply}")],
+            }
+        except Exception as e:
+            log.warning("Agent %s LLM error: %s — fallback", name, e)
+            return {
+                "results": {name: f"[{name}] {desc}"},
+                "messages": [("system", f"{name}: LLM error — {e}")],
+            }
+
     agent_node.__name__ = name
     return agent_node
 
@@ -93,7 +114,7 @@ def build_supervisor_graph() -> StateGraph:
     graph.add_node("final", final_aggregator)
 
     for name, desc in AGENT_REGISTRY.items():
-        graph.add_node(name, make_placeholder(name, desc))
+        graph.add_node(name, make_agent(name, desc))
 
     graph.add_edge(START, "supervisor")
     graph.add_conditional_edges("supervisor", router_llm, {
