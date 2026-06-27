@@ -20,9 +20,11 @@ class AgentState(TypedDict):
 # Agent types ที่ระบบรองรับ
 # เพิ่ม agent ใหม่ → แค่เติมใน AGENT_REGISTRY และสร้างไฟล์ใน src/agents/
 AGENT_REGISTRY = {
-    "sales":   "Sales Agent — ตอบคำถามลูกค้าผ่านเว็บแชท ส่งอีเมล",
-    "dev":     "Dev Agent — สร้างเว็บ landing page, API",
-    "data":    "Data Agent — วิเคราะห์ข้อมูล สร้างกราฟ รายงาน visuals",
+    "sales":    "Sales Agent — เก็บโจทย์ลูกค้า, pain point, สรุป需求",
+    "research": "Research Agent — หาข้อมูลตลาด, คู่แข่ง, keyword, insight",
+    "content":  "Content Agent — เขียน copy, landing content, article",
+    "dev":      "Dev Agent — สร้างเว็บ, feature, automation",
+    "data":     "Data Agent — วิเคราะห์ผลลัพธ์ lead/content/performance",
 }
 
-# จะเพิ่ม agent ใหม่ → แค่เติมใน AGENT_REGISTRY และสร้างไฟล์ใน src/agents/
+# เพิ่ม agent ใหม่ → แค่เติมใน AGENT_REGISTRY และสร้างไฟล์ใน src/agents/
