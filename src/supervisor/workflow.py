@@ -79,10 +79,10 @@ def supervisor_node(state: AgentState) -> AgentState:
 
 def final_aggregator(state: AgentState) -> AgentState:
     """รวมผลลัพธ์จากทุก agent สรุปส่งผู้ใช้"""
-    # ถ้า Data Agent ทำเสร็จแล้ว มี final_output → ใช้เลย
     final = state.get("final_output", "")
+    ctx = state.get("conversation_context", "")
     if final:
-        return {"final_output": final}
+        return {"final_output": final, "conversation_context": ctx}
 
     results = state.get("results", {})
     agent_names = [k for k in results.keys()]
@@ -90,7 +90,8 @@ def final_aggregator(state: AgentState) -> AgentState:
     summary = "\n".join(summary_lines)
     log.info("Final output: %d results from %s", len(results), agent_names)
     return {
-        "final_output": f"## Pipeline Complete\n\n{summary}" if summary else "No results."
+        "final_output": f"## Pipeline Complete\n\n{summary}" if summary else "No results.",
+        "conversation_context": ctx,
     }
 
 
