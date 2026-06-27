@@ -104,6 +104,18 @@ tr:hover td{background:#fafbfd}
 .project-card h4{font-size:0.85em;margin-bottom:4px}
 .project-card .count{font-size:0.75em;color:var(--muted)}
 
+/* Notebooks */
+.nb-list{display:flex;flex-direction:column;gap:8px}
+.nb-item{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;background:var(--card);border-radius:8px;border:1px solid var(--border);cursor:pointer;transition:border-color 0.2s,box-shadow 0.2s}
+.nb-item:hover{border-color:var(--accent);box-shadow:0 2px 8px rgba(0,0,0,0.04)}
+.nb-item .nb-title{font-weight:600;font-size:0.9em}
+.nb-item .nb-meta{font-size:0.78em;color:var(--muted)}
+.nb-status{display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.72em;font-weight:700}
+.nb-status.in_progress{background:#fef9e7;color:var(--amber)}
+.nb-status.confirmed{background:#ecfdf5;color:var(--green)}
+.nb-viewer{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:24px;font-family:monospace;font-size:0.84em;line-height:1.7;white-space:pre-wrap;max-height:600px;overflow-y:auto;margin-top:12px}
+.nb-back{cursor:pointer;color:var(--accent);font-weight:600;font-size:0.85em;margin-bottom:12px;display:inline-block}
+
 /* Search */
 .search{width:100%;max-width:320px;padding:9px 14px;border:1px solid var(--border);border-radius:8px;font-size:0.85em;outline:none;margin-bottom:14px;font-family:inherit;transition:border-color 0.2s}
 .search:focus{border-color:var(--accent)}
@@ -164,12 +176,14 @@ tr:hover td{background:#fafbfd}
     <button class="tab" data-tab="leads">Leads</button>
     <button class="tab" data-tab="content">Content</button>
     <button class="tab" data-tab="projects">Projects</button>
+    <button class="tab" data-tab="notebooks">📓 Notebooks</button>
   </div>
 
   <div class="tab-content active" id="t-overview"><div class="panel" id="overviewPanel">Loading...</div></div>
   <div class="tab-content" id="t-leads"><input class="search" id="leadSearch" placeholder="Search leads..." oninput="renderLeads()"><div class="panel" id="leadsPanel">Loading...</div></div>
   <div class="tab-content" id="t-content"><div class="panel" id="contentPanel">Loading...</div></div>
   <div class="tab-content" id="t-projects"><div class="panel" id="projectsPanel">Loading...</div></div>
+  <div class="tab-content" id="t-notebooks"><div class="panel" id="notebooksPanel">Loading...</div></div>
 
 </div>
 
@@ -185,7 +199,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   refresh();setInterval(refreshStats,20000);
 });
 
-async function refresh(){await Promise.all([fLeads(),fDrafts(),fProjects(),fStatus()]);renderAll()}
+async function refresh(){await Promise.all([fLeads(),fDrafts(),fProjects(),fNotebooks(),fStatus()]);renderAll()}
 async function refreshStats(){await fStatus();renderStats()}
 async function fJSON(u){try{const r=await fetch(u);return await r.json()}catch(e){return{success:false}}}
 async function fLeads(){const r=await fJSON('/api/leads?limit=200');if(r.success)S.leads=r.data}
@@ -193,8 +207,10 @@ async function fDrafts(){const r=await fJSON('/api/drafts?limit=200');if(r.succe
 async function fProjects(){const r=await fJSON('/api/projects');if(r.success)S.projects=r.data}
 async function fStatus(){const r=await fJSON('/status');S.metrics=r.metrics||{};S.uptime=r.uptime_seconds||0;
   document.getElementById('uptime').textContent=fmtTime(S.uptime)}
+let notebooksData=[];
+async function fNotebooks(){const r=await fJSON('/api/notebooks');if(r.success)notebooksData=r.data}
 
-function renderAll(){renderStats();renderOverview();renderLeads();renderContent();renderProjects()}
+function renderAll(){renderStats();renderOverview();renderLeads();renderContent();renderProjects();renderNotebooks()}
 
 function renderStats(){
   document.getElementById('statLeads').textContent=S.leads.length;
@@ -234,6 +250,31 @@ function renderProjects(){
   document.getElementById('projectsPanel').innerHTML=`<div class="project-grid">${
     S.projects.map(p=>`<div class="project-card"><div class="icon">🌐</div><h4>${esc(p.name)}</h4><div class="count">${p.files?.length||0} files</div></div>`).join('')
   }</div>`;
+}
+
+function renderNotebooks(){
+  if(!notebooksData.length){document.getElementById('notebooksPanel').innerHTML='<div class="empty"><div class="icon">📓</div><p>No notebooks yet. Start a chat conversation first.</p></div>';return}
+  document.getElementById('notebooksPanel').innerHTML=`
+    <div class="nb-list">${
+      notebooksData.map(n=>`
+        <div class="nb-item" onclick="viewNotebook('${n.id}')">
+          <div>
+            <div class="nb-title">📓 ${esc(n.title)}</div>
+            <div class="nb-meta">ID: ${n.id} · ${(n.size||0)} bytes</div>
+          </div>
+          <span class="nb-status ${n.status}">${n.status==='confirmed'?'✅ Confirmed':'🟡 Active'}</span>
+        </div>
+      `).join('')
+    }</div>`;
+}
+
+async function viewNotebook(id){
+  document.getElementById('notebooksPanel').innerHTML='<div class="loading">Loading...</div>';
+  const r=await fJSON('/api/notebooks/'+id);
+  if(!r.success){document.getElementById('notebooksPanel').innerHTML='<div class="empty">Notebook not found</div>';return}
+  document.getElementById('notebooksPanel').innerHTML=`
+    <div class="nb-back" onclick="renderNotebooks()">← Back to list</div>
+    <div class="nb-viewer">${esc(r.data)}</div>`;
 }
 
 function esc(s){return(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
