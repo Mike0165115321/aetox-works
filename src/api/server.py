@@ -93,6 +93,7 @@ class PipelineResponse(BaseModel):
     status: str
     sales_confirmed: bool = False
     conversation_context: str = ""
+    results: dict = {}
 
 
 class HealthResponse(BaseModel):
@@ -266,6 +267,7 @@ async def run_pipeline(
             status="success",
             sales_confirmed=result.get("sales_confirmed", False),
             conversation_context=result.get("conversation_context", ""),
+            results=_summarize_results(result.get("results", {})),
         )
 
     except Exception as e:
@@ -385,6 +387,52 @@ async def api_notebook_read(lead_id: str):
         raise
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+def _summarize_results(results: dict) -> dict:
+    """Extract key info from each agent's output for the frontend"""
+    import json as _json
+    summary = {}
+    for agent_name, raw in results.items():
+        try:
+            data = _json.loads(raw) if isinstance(raw, str) else raw
+            if agent_name == "sales":
+                summary[agent_name] = {
+                    "status": data.get("status", ""),
+                    "lead_id": data.get("lead_id"),
+                    "notebook": data.get("notebook", ""),
+                }
+            elif agent_name == "research":
+                findings = data.get("findings", {})
+                summary[agent_name] = {
+                    "sources": data.get("sources", 0),
+                    "summary": findings.get("summary_thai", "") if isinstance(findings, dict) else str(findings)[:200],
+                    "keywords": findings.get("keywords", []) if isinstance(findings, dict) else [],
+                }
+            elif agent_name == "content":
+                summary[agent_name] = {
+                    "draft_id": data.get("draft_id"),
+                    "title": data.get("title", ""),
+                    "content_type": data.get("content_type", ""),
+                    "body_preview": data.get("body_preview", ""),
+                }
+            elif agent_name == "dev":
+                summary[agent_name] = {
+                    "files": [f.get("path", "") for f in data.get("files_built", [])],
+                    "project_type": data.get("project_type", ""),
+                    "title": data.get("title", ""),
+                }
+            elif agent_name == "data":
+                summary[agent_name] = {
+                    "report_id": data.get("report_id"),
+                    "overall_status": data.get("overall_status", ""),
+                    "summary": data.get("summary", ""),
+                }
+            else:
+                summary[agent_name] = {"raw": str(raw)[:200]}
+        except Exception:
+            summary[agent_name] = {"raw": str(raw)[:200]}
+    return summary
 
 
 # ═══════════════════════════════════════════════════════════
