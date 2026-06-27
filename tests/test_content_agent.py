@@ -139,7 +139,8 @@ def test_content_node_llm_error(mock_llm, tmp_path, monkeypatch):
     result = content_node(state)
     assert "content" in result["results"]
     parsed = json.loads(result["results"]["content"])
-    assert parsed["status"] == "complete"
+    assert parsed["status"] == "partial"
+    assert parsed["llm_error"] == "Timeout"
 
 
 @patch("src.agents.content_agent.call_llm")

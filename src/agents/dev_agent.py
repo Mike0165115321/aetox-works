@@ -12,11 +12,12 @@ import re
 
 from src.supervisor import AgentState
 from src.config.agent_configs import get_system_prompt, get_output_format
-from src.llm.client import call_llm
+from src.llm.client import call_llm, is_llm_failure
 from src.tools.builder import (
     generate_landing,
     generate_html,
     write_file,
+    write_project_file,
     serve_preview,
     list_projects,
 )
@@ -80,6 +81,7 @@ def dev_node(state: AgentState) -> dict:
             content_context = content_raw[:1000]
 
     # ── LLM Plan + Generate ──
+    llm_error = ""
     try:
         format_instruction = (
             f"\n\n⚠️ ตอบกลับเป็น JSON format นี้เท่านั้น:\n{output_format}"
@@ -94,9 +96,20 @@ def dev_node(state: AgentState) -> dict:
             f"{format_instruction}",
             system_prompt=system_prompt,
         )
+        if is_llm_failure(llm_response):
+            llm_error = llm_response
+            log.warning("Dev LLM failure response: %s", llm_response)
+            llm_response = json_mod.dumps({
+                "project_type": "landing",
+                "title": "Aetox Page",
+                "headline": user_input[:80],
+                "subheadline": "สร้างโดย Dev Agent",
+                "features": [{"title": "อัตโนมัติ", "desc": "ระบบ AI"}],
+            }, ensure_ascii=False)
         log.info("Dev LLM reply: %s", llm_response[:120])
     except Exception as e:
         log.warning("Dev LLM error: %s", e)
+        llm_error = str(e)
         llm_response = json_mod.dumps({
             "project_type": "landing",
             "title": "Aetox Page",
@@ -127,6 +140,7 @@ def dev_node(state: AgentState) -> dict:
 
     # ── Build ──
     files_built = []
+    build_error = ""
     try:
         if project_type in ("landing", "website"):
             result = generate_landing(
@@ -151,9 +165,10 @@ app = FastAPI(title="{title}")
 def root():
     return {{"message": "{headline}"}}
 '''
-            result = write_file(
-                f"output/websites/aetox-latest/{title.lower().replace(' ', '_')}_api.py",
+            result = write_project_file(
+                f"{title.lower().replace(' ', '_')}_api.py",
                 api_code,
+                output_subdir="aetox-latest",
             )
             files_built.append({"path": result["path"], "type": "api"})
 
@@ -167,13 +182,20 @@ def root():
             files_built.append({"path": result["path"], "type": project_type})
     except Exception as e:
         log.warning("Dev build error: %s", e)
+        build_error = str(e)
 
     # ── Log metrics ──
     try:
         save_metric("dev", "pages_built", len(files_built))
-        save_metric("dev", "project_type", project_type)
-    except Exception:
-        pass
+        save_metric("dev", "project_type_requests", 1, metadata={"project_type": project_type})
+    except Exception as e:
+        log.warning("Dev metric save error: %s", e)
+
+    status = "complete"
+    if llm_error:
+        status = "partial"
+    if build_error or not files_built:
+        status = "error"
 
     merged = dict(state.get("results", {}))
     merged["dev"] = json_mod.dumps({
@@ -182,7 +204,9 @@ def root():
         "title": title,
         "files_built": files_built,
         "tech_stack": tech_stack,
-        "status": "complete",
+        "llm_error": llm_error,
+        "build_error": build_error,
+        "status": status,
     }, ensure_ascii=False)
 
     return {

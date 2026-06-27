@@ -30,6 +30,23 @@ def test_parse_conversation_thai_fields():
     assert result["needs"] == ["SEO"]
 
 
+def test_parse_natural_thai_sales_details():
+    from src.agents.sales_agent import _parse_conversation
+    ctx = (
+        "ลูกค้า: ผมชื่อไมค์ครับ\n"
+        "ลูกค้า: ผมอยากได้ลูกค้าต่อเดือนสัก 10 คน ยอดขายจากปัจจุบัน 5000 ต่อเดือน เป็น 20000 ต่อเดือน\n"
+        "ลูกค้า: 1 อาทิตย์ได้ไหมครับ\n"
+    )
+
+    result = _parse_conversation(ctx)
+
+    assert result["customer_name"] == "ไมค์"
+    assert result["needs"]
+    assert "ลูกค้าต่อเดือน" in result["goals"][0]
+    assert result["timeline"] == "1 อาทิตย์"
+    assert "เป้าหมาย:" in result["summary_thai"]
+
+
 # ── Info Complete Check ──────────────────────────────────
 
 
@@ -94,6 +111,52 @@ def test_sales_continues_conversation(mock_llm):
 
 
 @patch("src.agents.sales_agent.call_llm")
+def test_sales_reuses_notebook_between_turns(mock_llm):
+    """Follow-up messages with returned context keep one notebook instead of creating a new file."""
+    mock_llm.side_effect = [
+        "รับทราบครับ ขอทราบชื่อหรือบริษัทหน่อยครับ?",
+        "รับทราบครับ เป้าหมายหลักคืออะไรครับ?",
+    ]
+
+    from src.agents.sales_agent import sales_node
+    from src.tools.notebook import list_notebooks
+
+    first = sales_node(new_state("ช่วยทำ landing page หน่อยครับ"))
+    second = sales_node(new_state(
+        "ผมชื่อไมค์ จากบริษัท Aetox ครับ",
+        ctx=first["conversation_context"],
+    ))
+
+    notebooks = list_notebooks()
+    assert len(notebooks) == 1
+    assert first["sales_notebook"]["_nb_id"] == second["sales_notebook"]["_nb_id"]
+
+
+@patch("src.agents.sales_agent.call_llm")
+def test_sales_names_temporary_notebook_from_customer_identity(mock_llm):
+    """Once Sales knows the customer identity, the notebook file gets a meaningful id/title."""
+    mock_llm.return_value = "รับทราบครับ ขอทราบเป้าหมายหลักเพิ่มเติมครับ?"
+
+    from src.agents.sales_agent import sales_node
+    from src.tools.notebook import list_notebooks
+
+    result = sales_node(new_state(
+        "ผมชื่อไมค์ จากบริษัท Aetox ครับ ต้องการ landing page เพื่อเพิ่มลูกค้าใหม่"
+    ))
+
+    nb_id = result["sales_notebook"]["_nb_id"]
+    notebooks = list_notebooks()
+
+    assert not nb_id.isdigit()
+    assert "aetox" in nb_id
+    assert "ไมค์" in nb_id
+    assert len(notebooks) == 1
+    assert notebooks[0]["id"] == nb_id
+    assert "Aetox" in notebooks[0]["title"]
+    assert "[NB:" + nb_id + "]" in result["conversation_context"]
+
+
+@patch("src.agents.sales_agent.call_llm")
 def test_sales_loads_existing_notebook_from_context(mock_llm, tmp_path, monkeypatch):
     """Existing [NB:...] marker → Sales reloads persisted notebook data"""
     monkeypatch.setattr("src.tools.notebook._NOTEBOOK_DIR", tmp_path)
@@ -134,6 +197,7 @@ def test_sales_loads_existing_notebook_from_context(mock_llm, tmp_path, monkeypa
 def test_sales_confirmation(mock_llm, tmp_path, monkeypatch):
     """Customer confirms → sales_confirmed = True, lead saved"""
     monkeypatch.setattr("src.tools.crm._DB_PATH", tmp_path / "crm.db")
+    monkeypatch.setattr("src.tools.notebook._NOTEBOOK_DIR", tmp_path / "notebooks")
     mock_llm.return_value = "ขอบคุณที่ยืนยันครับ!"
 
     from src.agents.sales_agent import sales_node
@@ -164,6 +228,13 @@ def test_sales_confirmation(mock_llm, tmp_path, monkeypatch):
     lead = get_lead(parsed["lead_id"])
     assert lead is not None
     assert lead["company"] == "Aetox"
+    assert parsed["notebook_id"] == "test123"
+    assert parsed["notebook"].endswith("lead_test123.md")
+
+    from src.tools.notebook import read_notebook
+    note = read_notebook("test123")
+    assert "### Notes Summary" in note
+    assert "ต้องการ:" in note
 
 
 # ── Sales Node: Info Complete But Not Confirmed ──────────

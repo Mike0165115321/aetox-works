@@ -19,11 +19,20 @@ from copy import deepcopy
 
 from src.supervisor import AgentState
 from src.config.agent_configs import get_system_prompt, get_output_format
-from src.llm.client import call_llm
+from src.llm.client import call_llm, is_llm_failure
 from src.tools.crm import init_db, save_lead, update_lead_status
-from src.tools.notebook import create_notebook, update_notebook, lock_notebook
+from src.tools.notebook import (
+    build_notebook_id,
+    build_notebook_title,
+    create_notebook,
+    lock_notebook,
+    rename_notebook,
+    update_notebook,
+)
 
 log = logging.getLogger("aetox.agents.sales")
+NB_MARKER_RE = r"\[NB:([^\]\r\n]+)\]"
+NB_MARKER_FULL_RE = r"\[NB:[^\]\r\n]+\]\n?"
 
 # ข้อมูลที่ Sales ต้องเก็บให้ครบก่อนขอ confirmation
 REQUIRED_FIELDS = ["customer_name", "company", "needs", "goals"]
@@ -84,7 +93,103 @@ def _parse_conversation(context: str) -> dict:
                         data[target_key] = val
                     break
 
+    natural = _parse_natural_conversation(context)
+    for key, val in natural.items():
+        if isinstance(val, list):
+            existing = data.setdefault(key, [])
+            for item in val:
+                if item and not _has_similar_item(existing, item):
+                    existing.append(item)
+        elif val and not data.get(key):
+            data[key] = val
+
     return data
+
+
+def _parse_natural_conversation(context: str) -> dict:
+    """Best-effort extraction from Thai customer messages without relying on JSON."""
+    data = deepcopy(SALES_JSON_SCHEMA)
+    user_lines = [
+        line.strip()
+        for line in re.findall(r"ลูกค้า:\s*(.+)", context)
+        if line.strip()
+    ]
+
+    for line in user_lines:
+        clean = _clean_customer_line(line)
+        if not clean or _is_confirmation_only(clean):
+            continue
+
+        name_m = re.search(r"(?:ผม|ฉัน|ดิฉัน|เรา)?\s*ชื่อ\s*([^\s,，]+)", clean)
+        if name_m and not data["customer_name"]:
+            data["customer_name"] = _strip_thai_polite(name_m.group(1))
+
+        company_m = re.search(r"(?:บริษัท(?:ชื่อ)?|จากบริษัท)\s*([^\s,，]+)", clean)
+        if company_m and not data["company"]:
+            data["company"] = _strip_thai_polite(company_m.group(1))
+
+        if _has_any(clean, ["ปัญหา", "ติด", "เจอ", "ช้า", "ไม่พอ", "ไม่ค่อย", "ยอดขายน้อย"]):
+            _append_unique(data["pain_points"], clean)
+
+        if _has_any(clean, ["ช่วย", "ต้องการ", "อยากให้", "ทำเว็บ", "ทำ landing", "landing page", "ระบบ", "automation"]):
+            _append_unique(data["needs"], clean)
+
+        if _has_any(clean, ["เป้าหมาย", "เพิ่ม", "ยอดขาย", "ลูกค้าใหม่", "ลูกค้า", "ต่อเดือน", "รายได้", "จากปัจจุบัน"]):
+            _append_unique(data["goals"], clean)
+            if "อยากได้" in clean and not data["needs"]:
+                _append_unique(data["needs"], f"ต้องการให้ช่วยบรรลุเป้าหมาย: {clean}")
+
+        timeline = _extract_timeline(clean)
+        if timeline and not data["timeline"]:
+            data["timeline"] = timeline
+
+    summary_parts = []
+    if data["needs"]:
+        summary_parts.append("ต้องการ: " + "; ".join(data["needs"]))
+    if data["goals"]:
+        summary_parts.append("เป้าหมาย: " + "; ".join(data["goals"]))
+    if data["timeline"]:
+        summary_parts.append("กรอบเวลา: " + data["timeline"])
+    data["summary_thai"] = " | ".join(summary_parts)
+    return data
+
+
+def _clean_customer_line(line: str) -> str:
+    clean = re.sub(NB_MARKER_FULL_RE, "", line).strip()
+    clean = re.sub(r"\s+", " ", clean)
+    return clean
+
+
+def _strip_thai_polite(text: str) -> str:
+    return re.sub(r"(ครับ|ค่ะ|คะ|นะครับ|นะคะ)$", "", text.strip())
+
+
+def _has_any(text: str, keywords: list[str]) -> bool:
+    return any(keyword in text for keyword in keywords)
+
+
+def _append_unique(items: list, item: str) -> None:
+    item = item.strip()
+    if item and not _has_similar_item(items, item):
+        items.append(item)
+
+
+def _has_similar_item(items: list, item: str) -> bool:
+    normalized = item.strip()
+    return any(normalized == existing or normalized in existing or existing in normalized for existing in items)
+
+
+def _is_confirmation_only(text: str) -> bool:
+    normalized = text.strip().lower()
+    return normalized in {
+        "ตกลง", "ยืนยัน", "yes", "ok", "โอเค", "okay", "ใช่", "ใช่แล้ว",
+        "ถูกต้อง", "ได้เลย", "เริ่มเลย", "ทำเลย", "จัดเลย", "ลุย"
+    }
+
+
+def _extract_timeline(text: str) -> str:
+    m = re.search(r"(?:ภายใน|ใน|กรอบเวลา|ใช้เวลา|อยากได้ภายใน)?\s*([0-9๐-๙]+\s*(?:วัน|อาทิตย์|สัปดาห์|เดือน|ปี))", text)
+    return m.group(1).strip() if m else ""
 
 
 def _is_info_complete(data: dict) -> bool:
@@ -99,7 +204,7 @@ def _is_info_complete(data: dict) -> bool:
 def _extract_nb_id(context: str) -> str:
     """Extract notebook ID from conversation_context marker"""
     import re
-    m = re.search(r"\[NB:(\w+)\]", context)
+    m = re.search(NB_MARKER_RE, context)
     return m.group(1) if m else ""
 
 
@@ -107,8 +212,34 @@ def _embed_nb_id(context: str, nb_id: str) -> str:
     """Embed notebook ID into conversation_context so it persists across requests"""
     # Remove old marker if exists, then prepend new one
     import re
-    clean = re.sub(r"\[NB:\w+\]\n?", "", context)
+    clean = re.sub(NB_MARKER_FULL_RE, "", context)
     return f"[NB:{nb_id}]\n{clean}" if nb_id else clean
+
+
+def _maybe_rename_notebook(nb_id: str, notebook: dict) -> str:
+    """Give temporary Sales notebooks a meaningful file name once identity is known."""
+    if not nb_id or not str(nb_id).isdigit():
+        return nb_id
+
+    customer = notebook.get("customer", {}) if notebook else {}
+    name = customer.get("name", "")
+    company = customer.get("company", "")
+    if not name and not company:
+        return nb_id
+
+    title = build_notebook_title(name=name, company=company, fallback_id=nb_id)
+    desired_id = build_notebook_id(name=name, company=company, fallback_id=nb_id)
+    if not desired_id or desired_id == nb_id:
+        return nb_id
+
+    try:
+        final_id = rename_notebook(nb_id, desired_id, title=title)
+        if final_id != nb_id:
+            log.info("Sales notebook renamed: %s → %s", nb_id, final_id)
+        return final_id
+    except Exception as e:
+        log.warning("Sales notebook rename error: %s", e)
+        return nb_id
 
 
 def _load_notebook_from_disk(nb_id: str) -> dict | None:
@@ -138,6 +269,9 @@ def _load_notebook_from_disk(nb_id: str) -> dict | None:
 
         timeline_m = re.search(r"### Timeline\n- (.+)", content)
         if timeline_m: nb["business"]["timeline"] = timeline_m.group(1).strip()
+        summary_m = re.search(r"### Notes Summary\n(.*?)(?=\n###|\n---|\Z)", content, re.DOTALL)
+        if summary_m:
+            nb["conversation_summary"] = re.sub(r"\s+", " ", summary_m.group(1)).strip()
 
         return nb
     except Exception:
@@ -173,11 +307,13 @@ def _update_notebook(notebook: dict, collected: dict) -> dict:
         new_items = collected.get(field, [])
         if isinstance(new_items, list):
             for item in new_items:
-                if item not in existing and item:
+                if item and not _has_similar_item(existing, item):
                     existing.append(item)
             biz[field] = existing
     if collected.get("timeline") and not biz.get("timeline"):
         biz["timeline"] = collected["timeline"]
+    if collected.get("summary_thai"):
+        nb["conversation_summary"] = collected["summary_thai"]
 
     return nb
 
@@ -253,6 +389,8 @@ def sales_node(state: AgentState) -> dict:
     # Update notebook with new info
     collected = _parse_conversation(full_context)
     notebook = _update_notebook(notebook, collected)
+    nb_id = _maybe_rename_notebook(nb_id, notebook)
+    notebook["_nb_id"] = nb_id
 
     # Write to notebook file on disk
     _sync_notebook_to_disk(nb_id, notebook)
@@ -278,7 +416,7 @@ def sales_node(state: AgentState) -> dict:
         }, ensure_ascii=False)
 
         # Clean context for LLM (remove internal markers)
-        clean_context = re.sub(r"\[NB:\w+\]\n?", "", full_context)
+        clean_context = re.sub(NB_MARKER_FULL_RE, "", full_context)
 
         reply = call_llm(
             f"## บทสนทนาที่ผ่านมา\n{clean_context}\n\n"
@@ -292,6 +430,9 @@ def sales_node(state: AgentState) -> dict:
             f"5. ถ้าข้อมูลครบ → สรุปสิ่งที่เข้าใจ + ขอคำยืนยัน",
             system_prompt=system_prompt,
         )
+        if is_llm_failure(reply):
+            log.warning("Sales LLM failure response: %s", reply)
+            reply = "ขออภัยครับ ระบบตอบกลับมีปัญหาชั่วคราว กรุณาลองใหม่อีกครั้งครับ"
         log.info("Sales reply: %s", reply[:100])
     except Exception as e:
         log.warning("Sales LLM error: %s", e)
@@ -323,7 +464,9 @@ def _sync_notebook_to_disk(nb_id: str, notebook: dict):
             "company": cust.get("company", ""),
             "contact": cust.get("contact", ""),
         })
-        update_notebook(nb_id, "business", biz)
+        biz_with_summary = dict(biz)
+        biz_with_summary["summary"] = notebook.get("conversation_summary", "")
+        update_notebook(nb_id, "business", biz_with_summary)
     except Exception as e:
         log.warning("Notebook sync error: %s", e)
 
@@ -372,7 +515,7 @@ def _handle_confirmation_v3(state: AgentState, notebook: dict, context: str, nb_
     # Lock notebook file + add confirmation
     lock_notebook(nb_id)
     update_notebook(nb_id, "log", f"✅ ลูกค้ายืนยัน — Lead #{lead_id} — ส่งต่องาน")
-    log.info("Notebook locked: %s → Lead #%d", nb_id, lead_id)
+    log.info("Notebook locked: %s → Lead #%s", nb_id, lead_id)
 
     # Create handoff brief (business only — NO personal data)
     handoff = _create_handoff_brief(notebook)
@@ -381,7 +524,8 @@ def _handle_confirmation_v3(state: AgentState, notebook: dict, context: str, nb_
         "agent": "sales",
         "lead_id": lead_id,
         "status": "confirmed",
-        "notebook": f"data/notebooks/lead_{lead_id}.md",
+        "notebook_id": nb_id,
+        "notebook": f"data/notebooks/lead_{nb_id}.md",
     }, ensure_ascii=False)
 
     confirm_msg = (

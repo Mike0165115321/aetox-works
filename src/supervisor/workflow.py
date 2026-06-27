@@ -10,6 +10,7 @@ import logging
 from langgraph.graph import StateGraph, START, END
 from src.supervisor import AgentState, AGENT_REGISTRY
 from src.llm.client import call_llm
+from src.supervisor import runtime
 
 # Agent nodes (real implementations with tools)
 from src.agents.sales_agent import sales_node
@@ -23,6 +24,21 @@ log = logging.getLogger("aetox")
 
 # Pipeline order — ลำดับการทำงานแบบ sequential
 PIPELINE_ORDER = ["sales", "research", "content", "dev", "data"]
+
+
+def _tracked_node(agent_name: str, node_func):
+    """Wrap an agent node so the admin graph reflects real execution."""
+    def _run(state: AgentState) -> dict:
+        runtime.mark_agent_running(agent_name)
+        try:
+            result = node_func(state)
+            runtime.mark_agent_done(agent_name, result)
+            return result
+        except Exception as e:
+            runtime.mark_agent_error(agent_name, e)
+            raise
+
+    return _run
 
 
 def router_llm(state: AgentState) -> str:
@@ -151,11 +167,11 @@ def build_pipeline_graph() -> StateGraph:
     graph.add_node("final", final_aggregator)
 
     # Agent nodes
-    graph.add_node("sales", sales_node)
-    graph.add_node("research", research_node)
-    graph.add_node("content", content_node)
-    graph.add_node("dev", dev_node)
-    graph.add_node("data", data_node)
+    graph.add_node("sales", _tracked_node("sales", sales_node))
+    graph.add_node("research", _tracked_node("research", research_node))
+    graph.add_node("content", _tracked_node("content", content_node))
+    graph.add_node("dev", _tracked_node("dev", dev_node))
+    graph.add_node("data", _tracked_node("data", data_node))
 
     # Start → supervisor → pipeline routing
     graph.add_edge(START, "supervisor")
@@ -212,11 +228,11 @@ def build_router_graph() -> StateGraph:
     graph.add_node("final", final_aggregator)
 
     # Agent nodes
-    graph.add_node("sales", sales_node)
-    graph.add_node("research", research_node)
-    graph.add_node("content", content_node)
-    graph.add_node("dev", dev_node)
-    graph.add_node("data", data_node)
+    graph.add_node("sales", _tracked_node("sales", sales_node))
+    graph.add_node("research", _tracked_node("research", research_node))
+    graph.add_node("content", _tracked_node("content", content_node))
+    graph.add_node("dev", _tracked_node("dev", dev_node))
+    graph.add_node("data", _tracked_node("data", data_node))
 
     graph.add_edge(START, "supervisor")
     graph.add_conditional_edges("supervisor", router_llm, {

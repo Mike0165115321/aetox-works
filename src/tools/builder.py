@@ -482,6 +482,13 @@ def write_file(path: str, content: str) -> dict[str, Any]:
     return {"path": str(full_path), "size": len(content)}
 
 
+def write_project_file(filename: str, content: str, output_subdir: str = "") -> dict[str, Any]:
+    """Write a generated project file under the configured output directory."""
+    out_dir = _ensure_output_dir(output_subdir)
+    safe_name = Path(filename).name
+    return write_file(str(out_dir / safe_name), content)
+
+
 def list_projects() -> list[dict[str, Any]]:
     """แสดงรายการโปรเจคที่สร้างไว้"""
     _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -505,6 +512,78 @@ def list_projects() -> list[dict[str, Any]]:
                 "path": str(_OUTPUT_DIR),
             })
     return projects
+
+
+def get_project(name: str) -> dict[str, Any] | None:
+    """Read one generated project and include HTML file contents for admin preview."""
+    _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    safe_name = Path(name).name
+    target_dir = _OUTPUT_DIR / safe_name
+
+    if target_dir.is_dir():
+        files = [f for f in target_dir.iterdir() if f.is_file()]
+        return {
+            "name": target_dir.name,
+            "path": str(target_dir),
+            "files": [_project_file_payload(f) for f in files],
+        }
+
+    direct_file = _OUTPUT_DIR / f"{safe_name}.html"
+    if direct_file.is_file():
+        return {
+            "name": direct_file.stem,
+            "path": str(_OUTPUT_DIR),
+            "files": [_project_file_payload(direct_file)],
+        }
+
+    return None
+
+
+def delete_project_file(project_name: str, file_name: str) -> bool:
+    """Delete one generated project file, constrained to the output directory."""
+    _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    safe_project = Path(project_name).name
+    safe_file = Path(file_name).name
+    if not safe_project or not safe_file:
+        return False
+    if safe_project != project_name or safe_file != file_name:
+        return False
+
+    target_dir = _OUTPUT_DIR / safe_project
+    if target_dir.is_dir():
+        target = target_dir / safe_file
+    else:
+        direct_file = _OUTPUT_DIR / f"{safe_project}.html"
+        target = direct_file if direct_file.name == safe_file else _OUTPUT_DIR / safe_file
+
+    try:
+        resolved_output = _OUTPUT_DIR.resolve()
+        resolved_target = target.resolve()
+    except FileNotFoundError:
+        return False
+
+    if resolved_output not in resolved_target.parents and resolved_target != resolved_output:
+        return False
+    if not resolved_target.is_file():
+        return False
+    resolved_target.unlink()
+    return True
+
+
+def _project_file_payload(path: Path) -> dict[str, Any]:
+    content = ""
+    if path.suffix.lower() in {".html", ".htm", ".css", ".js", ".txt", ".md", ".py"}:
+        try:
+            content = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            content = ""
+    return {
+        "name": path.name,
+        "path": str(path),
+        "size": path.stat().st_size,
+        "content": content,
+        "is_html": path.suffix.lower() in {".html", ".htm"},
+    }
 
 
 # ── Preview Server ────────────────────────────────────────

@@ -13,7 +13,7 @@ import re
 
 from src.supervisor import AgentState
 from src.config.agent_configs import get_system_prompt, get_output_format
-from src.llm.client import call_llm
+from src.llm.client import call_llm, is_llm_failure
 from src.tools.content_store import init_db, save_draft, list_drafts, update_draft
 from src.tools.reporter import save_metric
 
@@ -97,6 +97,7 @@ def content_node(state: AgentState) -> dict:
     content_type = _infer_content_type(user_input)
 
     # ── Generate Content via LLM ──
+    llm_error = ""
     try:
         format_instruction = (
             f"\n\n⚠️ ตอบกลับเป็น JSON format นี้เท่านั้น:\n{output_format}"
@@ -110,9 +111,14 @@ def content_node(state: AgentState) -> dict:
             f"โดยใช้ข้อมูลวิจัยประกอบ เขียนให้น่าสนใจและ actionable{format_instruction}",
             system_prompt=system_prompt,
         )
+        if is_llm_failure(reply):
+            llm_error = reply
+            log.warning("Content LLM failure response: %s", reply)
+            reply = f"[Content Agent] ร่าง content เบื้องต้นจาก: {user_input[:100]}..."
         log.info("Content LLM reply: %s", reply[:120])
     except Exception as e:
         log.warning("Content LLM error: %s", e)
+        llm_error = str(e)
         reply = f"[Content Agent] ร่าง content จาก: {user_input[:100]}..."
 
     # Parse structured JSON
@@ -147,8 +153,12 @@ def content_node(state: AgentState) -> dict:
     # ── Log metrics ──
     try:
         save_metric("content", "drafts_created", 1)
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning("Content metric save error: %s", e)
+
+    status = "complete"
+    if llm_error or draft_id is None:
+        status = "partial"
 
     merged = dict(state.get("results", {}))
     merged["content"] = json_mod.dumps({
@@ -160,7 +170,8 @@ def content_node(state: AgentState) -> dict:
         "cta": cta,
         "tone": tone,
         "target_audience": target,
-        "status": "complete",
+        "llm_error": llm_error,
+        "status": status,
     }, ensure_ascii=False)
 
     return {

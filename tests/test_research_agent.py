@@ -102,6 +102,8 @@ def test_research_node_basic(mock_llm, mock_exa, mock_firecrawl):
     assert len(findings["keywords"]) >= 1
     assert findings["summary_thai"] != ""
     assert parsed["sources"] == 2
+    assert parsed["source_mode"] == "real"
+    assert parsed["status"] == "complete"
 
 
 @patch("src.agents.research_agent.web_search")
@@ -127,7 +129,35 @@ def test_research_node_search_errors_graceful(mock_llm, mock_exa, mock_firecrawl
     assert "research" in result["results"]
     parsed = json.loads(result["results"]["research"])
     assert parsed["sources"] == 0  # searches failed
-    assert parsed["status"] == "complete"  # ไม่ crash
+    assert parsed["source_mode"] == "none"
+    assert parsed["warnings"]
+    assert parsed["status"] == "partial"  # ไม่ crash แต่ไม่หลอกว่า complete เต็ม
+
+
+@patch("src.agents.research_agent.web_search")
+@patch("src.agents.research_agent.semantic_search")
+@patch("src.agents.research_agent.call_llm")
+def test_research_node_marks_demo_sources_as_partial(mock_llm, mock_exa, mock_firecrawl):
+    """DEMO fallback from missing search keys is visible in structured output."""
+    mock_firecrawl.return_value = [
+        {"title": "[FIRECRAWL DEMO] Result", "url": "https://example.com", "description": "demo"},
+    ]
+    mock_exa.return_value = [
+        {"title": "[EXA DEMO] Result", "url": "https://example.com", "text": "demo"},
+    ]
+    mock_llm.return_value = json.dumps({"summary_thai": "demo research"}, ensure_ascii=False)
+
+    from src.agents.research_agent import research_node
+
+    state = {
+        "input": "ตลาด AI", "plan": "", "current_agent": "",
+        "messages": [], "results": {}, "final_output": "", "error": None,
+    }
+
+    result = research_node(state)
+    parsed = json.loads(result["results"]["research"])
+    assert parsed["source_mode"] == "demo"
+    assert parsed["status"] == "partial"
 
 
 @patch("src.agents.research_agent.web_search")
@@ -176,3 +206,4 @@ def test_research_node_no_json_fallback(mock_llm, mock_exa, mock_firecrawl):
     result = research_node(state)
     parsed = json.loads(result["results"]["research"])
     assert parsed["findings"]["summary_thai"] == "ไม่มีข้อมูลในระบบตอนนี้"
+    assert parsed["status"] == "partial"

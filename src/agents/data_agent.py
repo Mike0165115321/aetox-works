@@ -14,7 +14,7 @@ import re
 
 from src.supervisor import AgentState
 from src.config.agent_configs import get_system_prompt, get_output_format
-from src.llm.client import call_llm
+from src.llm.client import call_llm, is_llm_failure
 from src.tools.reporter import (
     init_db as init_metrics_db,
     save_metric,
@@ -62,6 +62,7 @@ def _collect_pipeline_stats(results: dict) -> dict:
         "lead_id": None,
         "draft_id": None,
         "files_built": 0,
+        "file_paths": [],
         "search_sources": 0,
     }
 
@@ -78,7 +79,9 @@ def _collect_pipeline_stats(results: dict) -> dict:
             elif agent_name == "content":
                 stats["draft_id"] = data.get("draft_id")
             elif agent_name == "dev":
-                stats["files_built"] = len(data.get("files_built", []))
+                files = data.get("files_built", [])
+                stats["files_built"] = len(files)
+                stats["file_paths"] = [f.get("path", "") for f in files if f.get("path")]
         except (json_mod.JSONDecodeError, AttributeError):
             pass
 
@@ -146,9 +149,15 @@ def data_node(state: AgentState) -> dict:
             f"และข้อเสนอแนะสำหรับขั้นตอนถัดไป (ภาษาไทย){format_instruction}",
             system_prompt=system_prompt,
         )
+        llm_error = ""
+        if is_llm_failure(llm_summary):
+            llm_error = llm_summary
+            log.warning("Data LLM failure response: %s", llm_summary)
+            llm_summary = f"[Data Agent] Pipeline complete: {len(results)} agents finished"
         log.info("Data LLM reply: %s", llm_summary[:120])
     except Exception as e:
         log.warning("Data LLM error: %s", e)
+        llm_error = str(e)
         llm_summary = f"[Data Agent] Pipeline complete: {len(results)} agents finished"
 
     # Parse structured JSON
@@ -157,6 +166,8 @@ def data_node(state: AgentState) -> dict:
         analysis = parsed
     else:
         analysis = {**DATA_JSON_SCHEMA, "summary_thai": llm_summary[:500]}
+        if llm_error:
+            analysis["overall_status"] = "partial"
 
     overall = analysis.get("overall_status", "success")
     insights = analysis.get("insights", [])
@@ -165,6 +176,7 @@ def data_node(state: AgentState) -> dict:
 
     # ── Save report ──
     report_id = None
+    report_error = ""
     try:
         report_id = save_report(
             title=f"Report: {user_input[:60]}",
@@ -175,17 +187,38 @@ def data_node(state: AgentState) -> dict:
         save_metric("data", "reports_generated", 1)
     except Exception as e:
         log.warning("Data save report error: %s", e)
+        report_error = str(e)
 
     # ── Build final output ──
     insights_md = "\n".join(f"- {i}" for i in insights[:5]) if insights else "- OK"
     recommendations_md = "\n".join(f"- {r}" for r in recommendations[:5]) if recommendations else "- พร้อมใช้งาน"
+
+    completed_agents = [
+        name.title()
+        for name in ("sales", "research", "content", "dev")
+        if pipeline_stats.get(f"{name}_done")
+    ]
+    pipeline_text = " → ".join(completed_agents + ["Data"]) if completed_agents else "Data"
+    deliverables = []
+    if pipeline_stats.get("lead_id"):
+        deliverables.append(f"- Lead ID: {pipeline_stats['lead_id']}")
+    if pipeline_stats.get("draft_id"):
+        deliverables.append(f"- Draft ID: {pipeline_stats['draft_id']}")
+    for path in pipeline_stats.get("file_paths", [])[:5]:
+        deliverables.append(f"- File: {path}")
+    deliverables_md = "\n".join(deliverables) if deliverables else "- ยังไม่มีไฟล์ส่งมอบจาก pipeline"
+
+    status = "complete"
+    if llm_error or report_error:
+        status = "partial"
 
     final_output = (
         f"## 📊 Aetox Works — รายงานสรุป\n\n"
         f"### ผลลัพธ์\n"
         f"- สถานะ: **{overall}**\n"
         f"- Leads: {db_stats['leads']} | Drafts: {db_stats['drafts']} | Projects: {db_stats['projects']}\n"
-        f"- Pipeline: {' → '.join(pipeline_stats.keys())}\n\n"
+        f"- Pipeline: {pipeline_text}\n\n"
+        f"### 📦 สิ่งที่ส่งมอบ\n{deliverables_md}\n\n"
         f"### 🔍 Insights\n{insights_md}\n\n"
         f"### 💡 ข้อเสนอแนะ\n{recommendations_md}\n\n"
         f"### 📝 สรุป\n{summary_text}\n\n"
@@ -201,7 +234,9 @@ def data_node(state: AgentState) -> dict:
         "insights": insights,
         "recommendations": recommendations,
         "metrics": aggregated_metrics,
-        "status": "complete",
+        "llm_error": llm_error,
+        "report_error": report_error,
+        "status": status,
     }, ensure_ascii=False)
 
     return {

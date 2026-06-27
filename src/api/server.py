@@ -12,14 +12,15 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import FastAPI, Request, HTTPException, Depends, Query
+from fastapi import FastAPI, Request, HTTPException, Depends, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import JSONResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import uvicorn
 
 from src.supervisor.workflow import build_supervisor_graph
+from src.supervisor import runtime
 from src.tools.crm import list_leads
 from src.tools.content_store import list_drafts
 from src.tools.builder import list_projects
@@ -29,15 +30,28 @@ from src.tools.reporter import aggregate_metrics
 # Logging Setup
 # ═══════════════════════════════════════════════════════════
 
-log = logging.getLogger("aetox.api")
-log.setLevel(logging.INFO)
+def _configure_api_logger() -> logging.Logger:
+    logger = logging.getLogger("aetox.api")
+    logger.setLevel(logging.INFO)
 
-# File handler สำหรับ request log
-_log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data")
-os.makedirs(_log_dir, exist_ok=True)
-_fh = logging.FileHandler(os.path.join(_log_dir, "api.log"), encoding="utf-8")
-_fh.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
-log.addHandler(_fh)
+    # File handler สำหรับ request log. Guarded so imports/reloads do not duplicate log lines.
+    log_dir = Path(__file__).resolve().parents[2] / "data"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "api.log"
+    has_handler = any(
+        isinstance(handler, logging.FileHandler)
+        and Path(getattr(handler, "baseFilename", "")).resolve() == log_path.resolve()
+        for handler in logger.handlers
+    )
+    if not has_handler:
+        file_handler = logging.FileHandler(log_path, encoding="utf-8")
+        file_handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
+        logger.addHandler(file_handler)
+    logger.propagate = False
+    return logger
+
+
+log = _configure_api_logger()
 
 
 # ═══════════════════════════════════════════════════════════
@@ -189,6 +203,12 @@ async def dashboard():
     return DASHBOARD_HTML
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """Avoid browser favicon 404 noise in local admin QA."""
+    return Response(status_code=204)
+
+
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     """Health check endpoint"""
@@ -232,7 +252,7 @@ async def system_status():
 
 
 @app.post("/pipeline/run", response_model=PipelineResponse)
-async def run_pipeline(
+def run_pipeline(
     req: PipelineRequest,
     x_api_key: str | None = None,
 ):
@@ -248,6 +268,7 @@ async def run_pipeline(
     start = time.time()
 
     log.info("[%s] Pipeline start — mode=%s input=%s", req_id, req.mode, req.input[:80])
+    runtime.reset_run(req_id, req.mode, req.input)
 
     try:
         graph = build_supervisor_graph(mode=req.mode)
@@ -270,6 +291,7 @@ async def run_pipeline(
 
         elapsed_ms = int((time.time() - start) * 1000)
         log.info("[%s] Pipeline done — %d agents, %dms", req_id, len(agents_used), elapsed_ms)
+        runtime.finish_run()
 
         summary = _summarize_results(result.get("results", {}))
         global _last_pipeline
@@ -280,6 +302,8 @@ async def run_pipeline(
             "elapsed_ms": elapsed_ms,
             "results": summary,
             "output": output,
+            "sales_confirmed": result.get("sales_confirmed", False),
+            "conversation_context": result.get("conversation_context", ""),
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -299,11 +323,12 @@ async def run_pipeline(
     except Exception as e:
         elapsed_ms = int((time.time() - start) * 1000)
         log.error("[%s] Pipeline error: %s", req_id, e)
+        runtime.finish_run()
         raise HTTPException(status_code=500, detail=f"Pipeline error: {str(e)}")
 
 
 @app.post("/agent/run")
-async def run_single_agent(
+def run_single_agent(
     req: PipelineRequest,
     x_api_key: str | None = None,
 ):
@@ -312,7 +337,7 @@ async def run_single_agent(
     """
     verify_api_key(x_api_key)
     req.mode = "router"
-    return await run_pipeline(req, x_api_key)
+    return run_pipeline(req, x_api_key)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -389,6 +414,68 @@ async def api_projects():
         return {"success": False, "error": str(e)}
 
 
+@app.get("/api/projects/{project_name}")
+async def api_project_detail(project_name: str):
+    """🌐 ดึงรายละเอียดโปรเจคพร้อมไฟล์สำหรับ preview ในหน้า Admin"""
+    try:
+        from src.tools.builder import get_project
+        project = get_project(project_name)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        return {"success": True, "data": project}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.delete("/api/projects/{project_name}/files/{file_name}")
+async def api_project_file_delete(project_name: str, file_name: str):
+    """🗑️ Delete one generated Dev Agent file."""
+    try:
+        from src.tools.builder import delete_project_file
+        ok = delete_project_file(project_name, file_name)
+        return {"success": ok, "message": "Deleted" if ok else "Not found"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/api/agents/status")
+async def api_agents_status():
+    """🧠 Runtime graph status for the agent pipeline"""
+    return {"success": True, "data": runtime.snapshot()}
+
+
+@app.get("/api/agents/layout")
+async def api_agents_layout():
+    """🧭 Get saved Admin agent graph layout"""
+    try:
+        from src.tools.agent_graph_layout import get_layout
+        return {"success": True, "data": get_layout()}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.put("/api/agents/layout")
+async def api_agents_layout_save(payload: dict = Body(default_factory=dict)):
+    """🧭 Save Admin agent graph layout"""
+    try:
+        from src.tools.agent_graph_layout import save_layout
+        return {"success": True, "data": save_layout(payload)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.delete("/api/agents/layout")
+async def api_agents_layout_reset():
+    """🧭 Reset Admin agent graph layout"""
+    try:
+        from src.tools.agent_graph_layout import reset_layout
+        return {"success": True, "data": reset_layout()}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 @app.get("/api/notebooks")
 async def api_notebooks():
     """📓 List all sales notebooks"""
@@ -415,6 +502,17 @@ async def api_notebook_read(lead_id: str):
         return {"success": False, "error": str(e)}
 
 
+@app.delete("/api/notebooks")
+async def api_notebooks_delete_all():
+    """🗑️ Delete all notebooks"""
+    try:
+        from src.tools.notebook import delete_all_notebooks
+        deleted = delete_all_notebooks()
+        return {"success": True, "deleted": deleted, "message": f"Deleted {deleted} notebooks"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 def _summarize_results(results: dict) -> dict:
     """Extract key info from each agent's output for the frontend"""
     import json as _json
@@ -426,6 +524,7 @@ def _summarize_results(results: dict) -> dict:
                 summary[agent_name] = {
                     "status": data.get("status", ""),
                     "lead_id": data.get("lead_id"),
+                    "notebook_id": data.get("notebook_id", ""),
                     "notebook": data.get("notebook", ""),
                 }
             elif agent_name == "research":

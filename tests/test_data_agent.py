@@ -23,6 +23,7 @@ def test_collect_pipeline_stats_full():
     assert stats["search_sources"] == 5
     assert stats["draft_id"] == 7
     assert stats["files_built"] == 1
+    assert stats["file_paths"] == ["x.html"]
 
 
 def test_collect_pipeline_stats_empty():
@@ -92,6 +93,7 @@ def test_data_node_full_pipeline(
     assert result["final_output"] != ""
     assert "รายงานสรุป" in result["final_output"]
     assert "success" in result["final_output"]
+    assert "File: x.html" in result["final_output"]
 
     parsed = json.loads(result["results"]["data"])
     assert parsed["report_id"] is not None
@@ -166,4 +168,5 @@ def test_data_node_llm_error(
     result = data_node(state)
     assert "รายงานสรุป" in result["final_output"]
     parsed = json.loads(result["results"]["data"])
-    assert parsed["status"] == "complete"
+    assert parsed["status"] == "partial"
+    assert parsed["llm_error"] == "LLM down"

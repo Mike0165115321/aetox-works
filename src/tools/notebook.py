@@ -6,6 +6,8 @@ Format: Markdown — เขียนโดย Sales Agent, อ่านโดย
 Location: data/notebooks/lead_{id}.md
 """
 import os
+import re
+import unicodedata
 from pathlib import Path
 from datetime import datetime
 from typing import Any
@@ -19,6 +21,46 @@ def _ensure_dir():
 
 def _notebook_path(lead_id: int | str) -> Path:
     return _NOTEBOOK_DIR / f"lead_{lead_id}.md"
+
+
+def _safe_notebook_id(value: int | str) -> str:
+    raw = unicodedata.normalize("NFKC", str(value).strip().lower())
+    chars: list[str] = []
+    for ch in raw:
+        if ch.isspace() or ch in "_-":
+            if chars and chars[-1] != "-":
+                chars.append("-")
+            continue
+        if ch in '\\/:*?"<>|' or ord(ch) < 32:
+            continue
+        if ch.isalnum() or unicodedata.category(ch).startswith("M"):
+            chars.append(ch)
+    safe = "".join(chars).strip("-")
+    safe = re.sub(r"-{2,}", "-", safe)
+    return safe[:56].strip("-")
+
+
+def build_notebook_title(name: str = "", company: str = "", fallback_id: str = "") -> str:
+    """Build a human-readable notebook title from customer identity."""
+    name = str(name or "").strip()
+    company = str(company or "").strip()
+    if company and name:
+        return f"{company} — {name}"
+    if company:
+        return company
+    if name:
+        return name
+    return f"Lead #{fallback_id}" if fallback_id else "New Lead"
+
+
+def build_notebook_id(name: str = "", company: str = "", fallback_id: str = "") -> str:
+    """Build a stable, filesystem-safe notebook id from customer identity."""
+    title = build_notebook_title(name=name, company=company, fallback_id=fallback_id)
+    base = _safe_notebook_id(title) or _safe_notebook_id(fallback_id) or datetime.now().strftime("%Y%m%d%H%M%S")
+    suffix = _safe_notebook_id(fallback_id)[-6:]
+    if suffix and suffix not in base:
+        base = f"{base}-{suffix}"
+    return base[:64].strip("-")
 
 
 def create_notebook(lead_id: int | str) -> str:
@@ -69,6 +111,33 @@ def create_notebook(lead_id: int | str) -> str:
 """
     path.write_text(content, encoding="utf-8")
     return str(path)
+
+
+def rename_notebook(old_id: int | str, new_id: int | str, title: str = "") -> str:
+    """Rename a notebook file and return the final notebook id."""
+    _ensure_dir()
+    old_id = str(old_id)
+    safe_new_id = _safe_notebook_id(new_id)
+    if not old_id or not safe_new_id:
+        return old_id
+
+    old_path = _notebook_path(old_id)
+    if not old_path.exists():
+        return old_id
+
+    final_id = safe_new_id
+    final_path = _notebook_path(final_id)
+    if final_path.resolve() != old_path.resolve():
+        counter = 2
+        while final_path.exists():
+            final_id = f"{safe_new_id}-{counter}"
+            final_path = _notebook_path(final_id)
+            counter += 1
+        old_path.rename(final_path)
+
+    if title:
+        _retitle_notebook(final_path, title)
+    return final_id
 
 
 def read_notebook(lead_id: int | str) -> str | None:
@@ -136,11 +205,19 @@ def list_notebooks() -> list[dict[str, Any]]:
         text = f.read_text(encoding="utf-8")
         status = "confirmed" if "🟢 confirmed" in text else "in_progress"
         first_line = text.split("\n")[0] if text else f.stem
+        customer = _extract_table_value(text, "Name")
+        company = _extract_table_value(text, "Company")
+        created = _extract_meta_value(text, "Created")
+        updated = _extract_meta_value(text, "Last Updated")
         notebooks.append({
             "id": f.stem.replace("lead_", ""),
             "path": str(f),
             "status": status,
             "title": first_line.replace("# 📓 ", ""),
+            "customer": customer,
+            "company": company,
+            "created": created,
+            "updated": updated,
             "size": f.stat().st_size,
         })
     return notebooks
@@ -155,12 +232,45 @@ def delete_notebook(nb_id: str) -> bool:
     return False
 
 
+def delete_all_notebooks() -> int:
+    """Delete all notebook files and return the number removed."""
+    _ensure_dir()
+    count = 0
+    for path in _NOTEBOOK_DIR.glob("lead_*.md"):
+        if path.is_file():
+            path.unlink()
+            count += 1
+    return count
+
+
 # ── Internal helpers ──────────────────────────────────────
 
 def _update_timestamp(text: str, now: str) -> str:
     """Update 'Last Updated' line"""
     import re
     return re.sub(r"\*\*Last Updated:\*\* .*", f"**Last Updated:** {now}", text)
+
+
+def _retitle_notebook(path: Path, title: str) -> None:
+    text = path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    if not lines:
+        return
+    lines[0] = f"# 📓 Sales Notebook — {title}"
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    text = "\n".join(lines)
+    text = _update_timestamp(text, now)
+    path.write_text(text + ("\n" if text and not text.endswith("\n") else ""), encoding="utf-8")
+
+
+def _extract_meta_value(text: str, key: str) -> str:
+    m = re.search(rf"\*\*{re.escape(key)}:\*\*\s*(.+)", text)
+    return m.group(1).strip() if m else ""
+
+
+def _extract_table_value(text: str, field: str) -> str:
+    m = re.search(rf"\|\s*{re.escape(field)}\s*\|\s*(.*?)\s*\|", text)
+    return m.group(1).strip() if m else ""
 
 
 def _replace_section(text: str, section_header: str, new_content: str) -> str:
@@ -202,6 +312,10 @@ def _format_business_section(data: dict | str) -> str:
         return str(data)
 
     parts = []
+    summary = data.get("summary", "")
+    if summary:
+        parts.append(f"### Notes Summary\n{summary}")
+
     for field, label in [("pain_points", "Pain Points"), ("needs", "Needs"),
                           ("goals", "Goals")]:
         items = data.get(field, [])

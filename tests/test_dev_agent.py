@@ -55,10 +55,17 @@ def test_dev_node_landing(mock_llm, tmp_path, monkeypatch):
     assert parsed["project_type"] == "landing"
     assert len(parsed["files_built"]) >= 1
     assert parsed["files_built"][0]["path"].endswith(".html")
+    assert parsed["status"] == "complete"
 
     # verify file exists
     import os
     assert os.path.exists(parsed["files_built"][0]["path"])
+
+    from src.tools.reporter import get_metrics
+    metrics = get_metrics(agent_name="dev", metric_name="project_type_requests")
+    assert metrics
+    assert metrics[0]["metric_value"] == 1
+    assert metrics[0]["metadata"]["project_type"] == "landing"
 
 
 @patch("src.agents.dev_agent.call_llm")
@@ -76,7 +83,8 @@ def test_dev_node_llm_error(mock_llm, tmp_path, monkeypatch):
 
     result = dev_node(state)
     parsed = json.loads(result["results"]["dev"])
-    assert parsed["status"] == "complete"
+    assert parsed["status"] == "partial"
+    assert parsed["llm_error"] == "LLM down"
     assert len(parsed["files_built"]) >= 1
 
 
@@ -121,3 +129,30 @@ def test_dev_node_api_type(mock_llm, tmp_path, monkeypatch):
     parsed = json.loads(result["results"]["dev"])
     assert parsed["project_type"] == "api"
     assert any("api" in f["path"] for f in parsed["files_built"])
+    assert all(str(tmp_path / "websites") in f["path"] for f in parsed["files_built"])
+
+
+@patch("src.agents.dev_agent.generate_landing")
+@patch("src.agents.dev_agent.call_llm")
+def test_dev_node_build_error_is_not_success(mock_llm, mock_generate_landing):
+    """Build tool failure is surfaced as error instead of silent success."""
+    mock_llm.return_value = json.dumps({
+        "project_type": "landing",
+        "title": "Broken Build",
+        "headline": "H",
+        "features": [],
+    }, ensure_ascii=False)
+    mock_generate_landing.side_effect = Exception("disk full")
+
+    from src.agents.dev_agent import dev_node
+
+    state = {
+        "input": "สร้าง landing page", "plan": "", "current_agent": "",
+        "messages": [], "results": {}, "final_output": "", "error": None,
+    }
+
+    result = dev_node(state)
+    parsed = json.loads(result["results"]["dev"])
+    assert parsed["status"] == "error"
+    assert parsed["build_error"] == "disk full"
+    assert parsed["files_built"] == []

@@ -13,7 +13,7 @@ import re
 
 from src.supervisor import AgentState
 from src.config.agent_configs import get_system_prompt, get_output_format
-from src.llm.client import call_llm
+from src.llm.client import call_llm, is_llm_failure
 from src.tools.searcher import web_search, semantic_search, scrape_url
 from src.tools.reporter import save_metric
 
@@ -28,6 +28,13 @@ RESEARCH_JSON_SCHEMA = {
     "references": [],
     "summary_thai": "",
 }
+
+
+def _result_source_mode(results: list[dict], demo_label: str) -> str:
+    if not results:
+        return "none"
+    marker = f"[{demo_label.upper()} DEMO]"
+    return "demo" if any(marker in str(item.get("title", "")) for item in results) else "real"
 
 
 def _extract_research_json(text: str) -> dict:
@@ -101,11 +108,13 @@ def research_node(state: AgentState) -> dict:
 
     # ── Web Search ──
     web_results = []
+    search_errors = []
     try:
         web_results = web_search(query, num_results=5)
         log.info("Research: web search → %d results", len(web_results))
     except Exception as e:
         log.warning("Research web_search error: %s", e)
+        search_errors.append(f"web_search: {e}")
 
     # ── Semantic Search ──
     exa_results = []
@@ -114,6 +123,19 @@ def research_node(state: AgentState) -> dict:
         log.info("Research: semantic search → %d results", len(exa_results))
     except Exception as e:
         log.warning("Research semantic_search error: %s", e)
+        search_errors.append(f"semantic_search: {e}")
+
+    web_source_mode = _result_source_mode(web_results, "firecrawl")
+    semantic_source_mode = _result_source_mode(exa_results, "exa")
+    source_modes = {web_source_mode, semantic_source_mode} - {"none"}
+    if not source_modes:
+        source_mode = "none"
+    elif source_modes == {"real"}:
+        source_mode = "real"
+    elif source_modes == {"demo"}:
+        source_mode = "demo"
+    else:
+        source_mode = "mixed"
 
     # ── Deep scrape top URLs (max 2) ──
     deep_content = ""
@@ -127,6 +149,7 @@ def research_node(state: AgentState) -> dict:
             log.warning("Research scrape_url error %s: %s", url, e)
 
     # ── LLM Synthesize ──
+    llm_error = ""
     try:
         search_text = ""
         for r in web_results:
@@ -151,9 +174,14 @@ def research_node(state: AgentState) -> dict:
             f"ที่เกี่ยวข้องกับการตัดสินใจของลูกค้าเป็นภาษาไทย{format_instruction}",
             system_prompt=system_prompt,
         )
+        if is_llm_failure(reply):
+            llm_error = reply
+            log.warning("Research LLM failure response: %s", reply)
+            reply = f"[Research Agent] วิเคราะห์ตลาดเบื้องต้นจากข้อมูลที่มีสำหรับ: {user_input[:100]}..."
         log.info("Research LLM reply: %s", reply[:120])
     except Exception as e:
         log.warning("Research LLM error: %s", e)
+        llm_error = str(e)
         reply = f"[Research Agent] วิเคราะห์ตลาดสำหรับ: {user_input[:100]}..."
 
     # ── Parse structured JSON ──
@@ -168,16 +196,25 @@ def research_node(state: AgentState) -> dict:
     try:
         save_metric("research", "searches_done", total_sources)
         save_metric("research", "deep_scrapes", len(top_urls))
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning("Research metric save error: %s", e)
+
+    status = "complete"
+    if llm_error or search_errors or source_mode in {"demo", "none"}:
+        status = "partial"
 
     output = json_mod.dumps({
         "agent": "research",
         "findings": findings,
         "raw_reply": reply[:300],
         "sources": total_sources,
+        "source_mode": source_mode,
+        "web_source_mode": web_source_mode,
+        "semantic_source_mode": semantic_source_mode,
         "deep_scrapes": len(top_urls),
-        "status": "complete",
+        "warnings": search_errors,
+        "llm_error": llm_error,
+        "status": status,
     }, ensure_ascii=False)
 
     merged = dict(state.get("results", {}))

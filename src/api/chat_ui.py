@@ -133,7 +133,7 @@ let ctx='';
 
 async function send(){
   const t=inp.value.trim();if(!t)return;inp.value='';inp.style.height='40px';
-  document.getElementById('welcome')?.remove();
+  const welcome=document.getElementById('welcome');if(welcome)welcome.remove();
   addMsg(t,'self');toggleSend(true);
   const typingEl=addTyping();
   try{
@@ -158,7 +158,8 @@ function addTyping(){const d=document.createElement('div');d.className='typing';
 
 function addResult(d){
   const agents=d.agents_used||[],steps=A.map(a=>`<div class="rc-step${agents.includes(a)?' done':''}"><span class="si">${I[a]}</span>${N[a]}</div>`).join('');
-  const summary=(d.results||{}).data?.summary||d.output?.slice(0,250)||'';
+  const dataResults=d.results||{},dataSummary=dataResults.data&&dataResults.data.summary,outputSummary=d.output?d.output.slice(0,250):'';
+  const summary=dataSummary||outputSummary||'';
   const card=document.createElement('div');card.innerHTML=`
     <div class="result-card">
       <div class="rc-top"><h3>✓ Complete</h3><span class="rc-time">${d.elapsed_ms}ms</span></div>
@@ -169,7 +170,7 @@ function addResult(d){
 }
 
 function toggleSend(v){btn.disabled=v;inp.disabled=v}
-function latestAetoxReply(c){return(c||'').replace(/\[NB:\w+\]\n?/g,'').split('\nAetox: ').pop().trim()}
+function latestAetoxReply(c){return(c||'').replace(/\[NB:[^\]\r\n]+\]\n?/g,'').split('\nAetox: ').pop().trim()}
 function esc(s){return(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 inp.addEventListener('input',()=>{inp.style.height='40px';inp.style.height=Math.min(inp.scrollHeight,100)+'px'})
 </script>

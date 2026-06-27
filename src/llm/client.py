@@ -7,6 +7,14 @@ from src.config import get_deepseek_api_key, get_model_name, get_base_url
 _TIMEOUT = 30.0
 
 
+def is_llm_failure(text: str | None) -> bool:
+    """Return True when call_llm returned its explicit failure sentinel text."""
+    if not isinstance(text, str):
+        return False
+    clean = text.strip()
+    return clean.startswith("[LLM Timeout") or clean.startswith("[LLM Error")
+
+
 def call_llm(
     prompt: str,
     system_prompt: str | None = None,
