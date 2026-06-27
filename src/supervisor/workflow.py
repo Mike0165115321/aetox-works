@@ -96,21 +96,30 @@ def final_aggregator(state: AgentState) -> AgentState:
 
 def pipeline_next_agent(state: AgentState) -> str:
     """
-    Pipeline router: วิ่งตามลำดับ sales → research → content → dev → data → final
+    Pipeline router: sales → research → content → dev → data → final
 
-    ⚠️ CRITICAL: Sales Agent ต้อง confirmed ก่อนถึงจะไปต่อได้
-    ถ้า sales_confirmed = False → หยุดที่ sales (รอลูกค้าคุยต่อ)
+    ⚠️ CRITICAL: Sales ต้อง confirmed ก่อนถึงจะไปต่อ
+    ถ้าข้อมูลยังไม่ครบ → หยุดรอ (ไม่ loop)
     """
     results = state.get("results", {})
     sales_done = "sales" in results
     sales_confirmed = state.get("sales_confirmed", False)
+    notebook = state.get("sales_notebook") or {}
 
-    # ถ้า sales ทำงานแล้วแต่ยังไม่ confirmed → หยุด ไม่ไปต่อ
-    if sales_done and not sales_confirmed:
-        log.info("Pipeline: sales done but NOT confirmed → final (waiting for customer)")
+    # Sales has run already (results, notebook, or conversation exists)
+    sales_has_run = sales_done or bool(notebook) or bool(state.get("conversation_context"))
+
+    # If sales ran but not confirmed → STOP (don't loop back to sales)
+    if sales_has_run and not sales_confirmed:
+        log.info("Pipeline: sales active (notebook=%s) → final (awaiting confirmation)", 
+                 notebook.get("_nb_id", "?"))
         return "final"
 
-    # หา agent สุดท้ายที่ทำเสร็จแล้ว
+    # If sales confirmed but somehow not in results yet (edge case)
+    if sales_confirmed and not sales_done:
+        return "sales"  # re-run sales to get the confirmation output
+
+    # Find last completed agent
     for agent_name in reversed(PIPELINE_ORDER):
         if agent_name in results:
             idx = PIPELINE_ORDER.index(agent_name)
@@ -123,7 +132,7 @@ def pipeline_next_agent(state: AgentState) -> str:
                 return "final"
             break
 
-    # ถ้ายังไม่มี agent ไหนทำงานเลย → เริ่มที่ sales
+    # No agent has run yet → start at sales
     log.info("Pipeline: start → sales")
     return "sales"
 
