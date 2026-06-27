@@ -26,97 +26,397 @@ def _ensure_output_dir(subdir: str = "") -> Path:
 
 # ── HTML Templates ────────────────────────────────────────
 
-_LANDING_TEMPLATE = """<!DOCTYPE html>
+# Modern template with animations, gradient hero, card hover effects
+_TEMPLATE_MODERN = r"""<!DOCTYPE html>
 <html lang="th">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{title}</title>
 <style>
+  :root {{
+    --ink: #1a1a2e;
+    --surface: #ffffff;
+    --muted: #f5f5f7;
+    --accent: #e94560;
+    --accent-glow: rgba(233,69,96,0.4);
+    --hero-bg: linear-gradient(135deg, #0f0f23 0%, #1a1a3e 50%, #16213e 100%);
+    --card-bg: #ffffff;
+    --card-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    --card-hover-shadow: 0 12px 40px rgba(0,0,0,0.12);
+    --radius: 12px;
+    --max-width: 1100px;
+  }}
+
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{ font-family: -apple-system, 'Noto Sans Thai', sans-serif;
-         line-height: 1.6; color: #1a1a2e; }}
-  .hero {{ background: {hero_bg}; color: {hero_text}; padding: 80px 24px;
-           text-align: center; }}
-  .hero h1 {{ font-size: 2.5em; margin-bottom: 16px; }}
-  .hero p {{ font-size: 1.1em; opacity: 0.9; max-width: 640px; margin: 0 auto 32px; }}
-  .cta-btn {{ display: inline-block; padding: 14px 36px; background: {cta_bg};
-             color: {cta_text_color}; text-decoration: none; border-radius: 8px;
-             font-size: 1.1em; font-weight: 600; }}
-  .section {{ max-width: 960px; margin: 0 auto; padding: 60px 24px; }}
-  .section h2 {{ text-align: center; font-size: 1.8em; margin-bottom: 40px; }}
-  .features {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-              gap: 24px; }}
-  .feature {{ background: #f5f5f7; padding: 24px; border-radius: 12px; }}
-  .feature h3 {{ margin-bottom: 8px; }}
-  .footer {{ text-align: center; padding: 40px 24px; color: #666; font-size: 0.9em; }}
+
+  html {{ scroll-behavior: smooth; }}
+
+  body {{
+    font-family: -apple-system, BlinkMacSystemFont, 'Noto Sans Thai', 'Segoe UI', sans-serif;
+    line-height: 1.7;
+    color: var(--ink);
+    background: var(--surface);
+    -webkit-font-smoothing: antialiased;
+  }}
+
+  /* ── Nav ── */
+  .nav {{
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    background: rgba(255,255,255,0.85); backdrop-filter: blur(12px);
+    border-bottom: 1px solid rgba(0,0,0,0.06);
+    padding: 0 24px;
+  }}
+  .nav-inner {{
+    max-width: var(--max-width); margin: 0 auto;
+    display: flex; align-items: center; justify-content: space-between;
+    height: 60px;
+  }}
+  .nav-logo {{ font-weight: 700; font-size: 1.2em; color: var(--ink); text-decoration: none; }}
+  .nav-cta {{
+    padding: 8px 20px; background: var(--accent); color: #fff;
+    border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 0.9em;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }}
+  .nav-cta:hover {{ transform: translateY(-1px); box-shadow: 0 4px 16px var(--accent-glow); }}
+
+  /* ── Hero ── */
+  .hero {{
+    background: var(--hero-bg);
+    color: #ffffff;
+    padding: 140px 24px 100px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }}
+  .hero::before {{
+    content: '';
+    position: absolute; inset: 0;
+    background: radial-gradient(circle at 30% 50%, rgba(233,69,96,0.15) 0%, transparent 60%),
+                radial-gradient(circle at 70% 30%, rgba(99,102,241,0.1) 0%, transparent 50%);
+  }}
+  .hero-content {{ position: relative; z-index: 1; max-width: 720px; margin: 0 auto; }}
+  .hero h1 {{
+    font-size: clamp(2rem, 5vw, 3.8rem);
+    font-weight: 800;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    margin-bottom: 20px;
+    animation: fadeInUp 0.8s ease-out;
+  }}
+  .hero p {{
+    font-size: clamp(1rem, 2vw, 1.25rem);
+    opacity: 0.85;
+    max-width: 560px;
+    margin: 0 auto 36px;
+    line-height: 1.7;
+    animation: fadeInUp 0.8s ease-out 0.15s both;
+  }}
+  .hero .cta-btn {{
+    display: inline-block; padding: 16px 40px;
+    background: var(--accent); color: #fff;
+    text-decoration: none; border-radius: 10px;
+    font-size: 1.1em; font-weight: 700;
+    transition: transform 0.25s cubic-bezier(0.34,1.56,0.64,1),
+                box-shadow 0.25s ease;
+    animation: fadeInUp 0.8s ease-out 0.3s both;
+  }}
+  .hero .cta-btn:hover {{
+    transform: translateY(-2px) scale(1.03);
+    box-shadow: 0 8px 30px var(--accent-glow);
+  }}
+
+  /* ── Sections ── */
+  .section {{
+    max-width: var(--max-width); margin: 0 auto; padding: 80px 24px;
+  }}
+  .section-label {{
+    text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.8em;
+    font-weight: 700; color: var(--accent); margin-bottom: 8px;
+  }}
+  .section h2 {{
+    font-size: clamp(1.6rem, 3.5vw, 2.4rem);
+    font-weight: 800; letter-spacing: -0.02em;
+    margin-bottom: 16px; line-height: 1.25;
+  }}
+  .section-desc {{
+    color: #555; font-size: 1.05em; max-width: 600px;
+    margin-bottom: 48px; line-height: 1.65;
+  }}
+
+  /* ── Features Grid ── */
+  .features-grid {{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 24px;
+  }}
+  .feature-card {{
+    background: var(--card-bg);
+    border-radius: var(--radius);
+    padding: 32px 28px;
+    box-shadow: var(--card-shadow);
+    border: 1px solid rgba(0,0,0,0.04);
+    transition: transform 0.3s cubic-bezier(0.34,1.56,0.64,1),
+                box-shadow 0.3s ease;
+    animation: fadeInUp 0.6s ease-out both;
+  }}
+  .feature-card:hover {{
+    transform: translateY(-6px);
+    box-shadow: var(--card-hover-shadow);
+  }}
+  .feature-icon {{
+    width: 48px; height: 48px; border-radius: 12px;
+    background: linear-gradient(135deg, var(--accent), #ff6b81);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.4em; margin-bottom: 20px; color: #fff;
+  }}
+  .feature-card h3 {{
+    font-size: 1.15em; font-weight: 700; margin-bottom: 8px;
+  }}
+  .feature-card p {{
+    color: #555; font-size: 0.95em; line-height: 1.6;
+  }}
+
+  /* ── CTA Section ── */
+  .cta-section {{
+    background: var(--muted);
+    text-align: center;
+    padding: 80px 24px;
+  }}
+  .cta-section h2 {{
+    font-size: clamp(1.5rem, 3.5vw, 2.2rem);
+    font-weight: 800; margin-bottom: 12px;
+  }}
+  .cta-section p {{
+    color: #555; font-size: 1.05em; max-width: 500px;
+    margin: 0 auto 28px;
+  }}
+  .cta-section .cta-btn {{
+    display: inline-block; padding: 16px 40px;
+    background: var(--accent); color: #fff;
+    text-decoration: none; border-radius: 10px;
+    font-size: 1.1em; font-weight: 700;
+    transition: transform 0.25s cubic-bezier(0.34,1.56,0.64,1),
+                box-shadow 0.25s ease;
+  }}
+  .cta-section .cta-btn:hover {{
+    transform: translateY(-2px) scale(1.03);
+    box-shadow: 0 8px 30px var(--accent-glow);
+  }}
+
+  /* ── Footer ── */
+  .footer {{
+    text-align: center; padding: 48px 24px;
+    color: #888; font-size: 0.9em;
+    border-top: 1px solid rgba(0,0,0,0.06);
+  }}
+
+  /* ── Keyframes ── */
+  @keyframes fadeInUp {{
+    from {{ opacity: 0; transform: translateY(24px); }}
+    to   {{ opacity: 1; transform: translateY(0); }}
+  }}
+
+  /* ── Accessibility ── */
+  @media (prefers-reduced-motion: reduce) {{
+    *, *::before, *::after {{
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }}
+    html {{ scroll-behavior: auto; }}
+  }}
+
+  /* ── Responsive ── */
+  @media (max-width: 768px) {{
+    .hero {{ padding: 120px 20px 80px; }}
+    .hero h1 {{ font-size: clamp(1.8rem, 7vw, 2.5rem); }}
+    .section {{ padding: 60px 20px; }}
+    .features-grid {{ grid-template-columns: 1fr; }}
+  }}
+</style>
+</head>
+<body>
+  <nav class="nav">
+    <div class="nav-inner">
+      <a href="#" class="nav-logo">{title}</a>
+      <a href="#cta" class="nav-cta">{cta_text}</a>
+    </div>
+  </nav>
+
+  <section class="hero">
+    <div class="hero-content">
+      <h1>{headline}</h1>
+      <p>{subheadline}</p>
+      <a href="#cta" class="cta-btn">{cta_text}</a>
+    </div>
+  </section>
+
+  <section class="section">
+    <p class="section-label">{features_title}</p>
+    <h2>สิ่งที่คุณจะได้รับ</h2>
+    <p class="section-desc">{subheadline}</p>
+    <div class="features-grid">
+      {features_html}
+    </div>
+  </section>
+
+  <section class="cta-section" id="cta">
+    <h2>พร้อมเริ่มต้นหรือยัง?</h2>
+    <p>{subheadline}</p>
+    <a href="{cta_link}" class="cta-btn">{cta_text}</a>
+  </section>
+
+  <footer class="footer">
+    <p>© {year} {title} — สร้างโดย Aetox Works Dev Agent</p>
+  </footer>
+</body>
+</html>"""
+
+
+# Minimal template — clean, professional, no frills
+_TEMPLATE_MINIMAL = r"""<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{title}</title>
+<style>
+  :root {{
+    --ink: #1a1a2e; --surface: #fafafa; --card: #ffffff;
+    --accent: #2563eb; --muted: #e5e7eb; --radius: 8px;
+    --max-width: 960px;
+  }}
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{
+    font-family: -apple-system, 'Noto Sans Thai', 'Segoe UI', sans-serif;
+    line-height: 1.7; color: var(--ink); background: var(--surface);
+  }}
+  .hero {{
+    text-align: center; padding: 100px 24px 64px;
+    max-width: var(--max-width); margin: 0 auto;
+  }}
+  .hero h1 {{
+    font-size: clamp(1.8rem, 4vw, 2.8rem);
+    font-weight: 800; letter-spacing: -0.02em; margin-bottom: 16px;
+  }}
+  .hero p {{ color: #555; font-size: 1.1em; max-width: 540px; margin: 0 auto 32px; }}
+  .cta-btn {{
+    display: inline-block; padding: 14px 36px;
+    background: var(--accent); color: #fff;
+    text-decoration: none; border-radius: var(--radius);
+    font-weight: 600; font-size: 1em;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }}
+  .cta-btn:hover {{ transform: translateY(-2px); box-shadow: 0 6px 20px rgba(37,99,235,0.3); }}
+  .section {{ max-width: var(--max-width); margin: 0 auto; padding: 48px 24px; }}
+  .section h2 {{
+    font-size: 1.6em; font-weight: 700; margin-bottom: 32px;
+  }}
+  .features-grid {{
+    display: grid; gap: 20px;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  }}
+  .feature-card {{
+    background: var(--card); border-radius: var(--radius);
+    padding: 28px 24px;
+    border: 1px solid var(--muted);
+    transition: border-color 0.25s ease;
+  }}
+  .feature-card:hover {{ border-color: var(--accent); }}
+  .feature-card h3 {{ font-size: 1.05em; margin-bottom: 8px; }}
+  .feature-card p {{ color: #555; font-size: 0.95em; }}
+  .footer {{
+    text-align: center; padding: 40px 24px;
+    color: #888; font-size: 0.9em;
+    border-top: 1px solid var(--muted);
+  }}
 </style>
 </head>
 <body>
   <section class="hero">
     <h1>{headline}</h1>
     <p>{subheadline}</p>
-    <a class="cta-btn" href="{cta_link}">{cta_text}</a>
+    <a href="{cta_link}" class="cta-btn">{cta_text}</a>
   </section>
   <section class="section">
     <h2>{features_title}</h2>
-    <div class="features">
-      {features_html}
-    </div>
+    <div class="features-grid">{features_html}</div>
   </section>
-  <div class="footer">
-    <p>© {year} Aetox Works — สร้างโดย Dev Agent</p>
-  </div>
+  <footer class="footer">
+    <p>© {year} {title}</p>
+  </footer>
 </body>
 </html>"""
 
 
-def _render_features(features: list[dict[str, str]]) -> str:
-    """render feature cards HTML"""
+_TEMPLATES = {
+    "modern": _TEMPLATE_MODERN,
+    "minimal": _TEMPLATE_MINIMAL,
+}
+
+# Icon emoji per feature index
+_FEATURE_ICONS = ["🚀", "⚡", "🎯", "🔒", "📊", "💡", "🌟", "🛡️"]
+
+
+def _render_features(features: list[dict[str, str]], template: str = "modern") -> str:
+    """render feature cards HTML with stagger animation delay"""
     cards = []
-    for f in features:
-        cards.append(
-            f'<div class="feature"><h3>{f.get("title", "")}</h3>'
-            f'<p>{f.get("desc", "")}</p></div>'
-        )
+    for i, f in enumerate(features):
+        icon = _FEATURE_ICONS[i % len(_FEATURE_ICONS)]
+        if template == "modern":
+            cards.append(
+                f'<div class="feature-card" style="animation-delay: {i * 0.1}s">'
+                f'<div class="feature-icon">{icon}</div>'
+                f'<h3>{f.get("title", "")}</h3>'
+                f'<p>{f.get("desc", "")}</p></div>'
+            )
+        else:
+            cards.append(
+                f'<div class="feature-card">'
+                f'<h3>{f.get("title", "")}</h3>'
+                f'<p>{f.get("desc", "")}</p></div>'
+            )
     return "\n".join(cards)
+
+
+def _safe_or(val: str, default: str) -> str:
+    """Helper: return val if truthy, else default (for template placeholders)"""
+    return val if val else default
 
 
 def generate_landing(
     title: str = "Landing Page",
-    headline: str = "หัวข้อหลัก",
-    subheadline: str = "คำอธิบายสั้น ๆ",
+    headline: str = "\u0e2b\u0e31\u0e27\u0e02\u0e49\u0e2d\u0e2b\u0e25\u0e31\u0e01",
+    subheadline: str = "\u0e04\u0e33\u0e2d\u0e18\u0e34\u0e1a\u0e32\u0e22\u0e2a\u0e31\u0e49\u0e19 \u0e46",
     features: list[dict[str, str]] | None = None,
-    cta_text: str = "เริ่มต้นเลย",
+    cta_text: str = "\u0e40\u0e23\u0e34\u0e48\u0e21\u0e15\u0e49\u0e19\u0e40\u0e25\u0e22",
     cta_link: str = "#",
-    hero_bg: str = "#1a1a2e",
-    hero_text: str = "#ffffff",
-    cta_bg: str = "#e94560",
-    cta_text_color: str = "#ffffff",
-    features_title: str = "ฟีเจอร์ของเรา",
+    features_title: str = "\u0e1f\u0e35\u0e40\u0e08\u0e2d\u0e23\u0e4c\u0e02\u0e2d\u0e07\u0e40\u0e23\u0e32",
     output_subdir: str = "",
+    template: str = "modern",
 ) -> dict[str, Any]:
     """
-    สร้าง Landing Page HTML
+    \u0e2a\u0e23\u0e49\u0e32\u0e07 Landing Page HTML \u0e14\u0e49\u0e27\u0e22 template \u0e17\u0e35\u0e48\u0e40\u0e25\u0e37\u0e2d\u0e01\u0e44\u0e14\u0e49
 
     Args:
-        title: TITLE ของหน้า
-        headline: ข้อความหลัก
-        subheadline: ข้อความรอง
+        title: TITLE \u0e02\u0e2d\u0e07\u0e2b\u0e19\u0e49\u0e32
+        headline: \u0e02\u0e49\u0e2d\u0e04\u0e27\u0e32\u0e21\u0e2b\u0e25\u0e31\u0e01
+        subheadline: \u0e02\u0e49\u0e2d\u0e04\u0e27\u0e32\u0e21\u0e23\u0e2d\u0e07
         features: list[ {title, desc} ]
-        cta_text, cta_link: ปุ่ม CTA
-        hero_bg, hero_text: สีพื้นที่ Hero
-        cta_bg, cta_text_color: สีปุ่ม
-        features_title: หัวข้อฟีเจอร์
-        output_subdir: โฟลเดอร์ย่อยสำหรับเก็บไฟล์
+        cta_text, cta_link: \u0e1b\u0e38\u0e48\u0e21 CTA
+        features_title: \u0e2b\u0e31\u0e27\u0e02\u0e49\u0e2d\u0e1f\u0e35\u0e40\u0e08\u0e2d\u0e23\u0e4c
+        output_subdir: \u0e42\u0e1f\u0e25\u0e40\u0e14\u0e2d\u0e23\u0e4c\u0e22\u0e48\u0e2d\u0e22\u0e2a\u0e33\u0e2b\u0e23\u0e31\u0e1a\u0e40\u0e01\u0e47\u0e1a\u0e44\u0e1f\u0e25\u0e4c
+        template: "modern" (animations, gradient) \u0e2b\u0e23\u0e37\u0e2d "minimal" (clean, professional)
 
     Returns:
-        { "path": "path/to/file.html", "html": "<html...>", "url": "file://..." }
+        { "path": "...", "html": "...", "url": "file://..." }
     """
-    features = features or [{"title": "ฟีเจอร์ 1", "desc": "รายละเอียด..."}]
-    features_html = _render_features(features)
+    features = features or [{"title": "\u0e1f\u0e35\u0e40\u0e08\u0e2d\u0e23\u0e4c 1", "desc": "\u0e23\u0e32\u0e22\u0e25\u0e30\u0e40\u0e2d\u0e35\u0e22\u0e14..."}]
+    features_html = _render_features(features, template)
 
-    html = _LANDING_TEMPLATE.format(
+    tpl = _TEMPLATES.get(template, _TEMPLATE_MODERN)
+
+    html = tpl.format(
         title=title,
         headline=headline,
         subheadline=subheadline,
@@ -124,23 +424,20 @@ def generate_landing(
         features_html=features_html,
         cta_text=cta_text,
         cta_link=cta_link,
-        hero_bg=hero_bg,
-        hero_text=hero_text,
-        cta_bg=cta_bg,
-        cta_text_color=cta_text_color,
         year=datetime.now().year,
     )
 
     out_dir = _ensure_output_dir(output_subdir)
-    slug = title.lower().replace(" ", "-")[:30]
+    slug = title.lower().replace(" ", "-")[:40]
     file_path = out_dir / f"{slug}.html"
     file_path.write_text(html, encoding="utf-8")
 
-    log.info("Landing page created: %s", file_path)
+    log.info("Landing page created [%s]: %s", template, file_path)
     return {
         "path": str(file_path),
         "html": html,
         "url": f"file://{file_path}",
+        "template": template,
     }
 
 

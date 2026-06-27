@@ -136,6 +136,7 @@ def dev_node(state: AgentState) -> dict:
                 features=features,
                 cta_text=cta_text,
                 output_subdir="aetox-latest",
+                template="modern",
             )
             files_built.append({"path": result["path"], "type": project_type})
             log.info("Dev built landing: %s", result["path"])
