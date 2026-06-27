@@ -30,14 +30,29 @@ def final_aggregator(state: AgentState) -> AgentState:
     }
 
 
+def make_placeholder(name: str, desc: str):
+    """สร้าง placeholder agent — แก้ไขภายหลัง"""
+    def agent_node(state: AgentState) -> dict:
+        return {
+            "results": {name: f"[{name}] รอ implement: {desc}"},
+            "messages": [("system", f"{name}: ยังไม่ได้ implement")]
+        }
+    agent_node.__name__ = name
+    return agent_node
+
+
 def build_supervisor_graph() -> StateGraph:
     """สร้าง Supervisor-Worker Graph"""
     
     graph = StateGraph(AgentState)
     
-    # Node
+    # Node หลัก
     graph.add_node("supervisor", supervisor_node)
     graph.add_node("final", final_aggregator)
+    
+    # Worker agents (placeholder — implement ทีหลัง)
+    for name, desc in AGENT_REGISTRY.items():
+        graph.add_node(name, make_placeholder(name, desc))
     
     # Edge
     graph.add_edge(START, "supervisor")
@@ -45,13 +60,7 @@ def build_supervisor_graph() -> StateGraph:
         name: name for name in AGENT_REGISTRY
     })
     
-    # Worker agents (placeholder — จะเพิ่มเมื่อสร้าง agent จริง)
-    # graph.add_node("sales", sales_agent)
-    # graph.add_node("dev", dev_agent)
-    # graph.add_node("video", video_agent)
-    # graph.add_node("admin", admin_agent)
-    
-    # รอเชื่อมต่อเมื่อมี agent จริง
+    # Agent เสร็จ → ส่งกลับ supervisor
     for name in AGENT_REGISTRY:
         graph.add_edge(name, "final")
     
