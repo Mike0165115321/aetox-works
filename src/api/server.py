@@ -8,6 +8,7 @@ import os
 import time
 import uuid
 import logging
+from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any
 
@@ -487,7 +488,8 @@ def main():
         "src.api.server:app",
         host=host,
         port=port,
-        reload=False,
+        reload=True,
+        reload_dirs=[str(Path(__file__).parent.parent)],
         log_level="info",
     )
 
