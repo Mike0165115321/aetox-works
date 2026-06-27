@@ -21,6 +21,8 @@ def main(mode: str = "pipeline"):
         "error": None,
         "sales_confirmed": False,
         "conversation_context": "",
+        "sales_notebook": {},
+        "handoff_brief": {},
     })
     
     print("=" * 60)

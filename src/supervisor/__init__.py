@@ -18,6 +18,8 @@ class AgentState(TypedDict):
     # ── Sales Agent controls ──
     sales_confirmed: bool               # ลูกค้ายืนยันดำเนินการต่อ? (Sales → Research gate)
     conversation_context: str           # ประวัติบทสนทนาทั้งหมด (สำหรับ multi-turn)
+    sales_notebook: dict                # สมุดโน๊ตส่วนตัว Sales (เก็บข้อมูลลูกค้าสะสม)
+    handoff_brief: dict                 # เอกสารส่งต่องาน (เฉพาะข้อมูลธุรกิจ ไม่มีข้อมูลส่วนตัว)
 
 
 # Agent types ที่ระบบรองรับ

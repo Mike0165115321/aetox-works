@@ -1,13 +1,16 @@
 """
-Aetox Works — Sales Agent 🗣️ (v2 — Multi-turn Sales Conversation)
+Aetox Works — Sales Agent 🗣️ (v3 — Notebook + Handoff)
 
 บทบาท: นักขาย / นักการตลาด
 หน้าที่:
-  1. คุยกับลูกค้า ถามทีละคำถาม เก็บข้อมูลให้ครบ
-  2. เมื่อข้อมูลครบ → สรุปความเข้าใจ → ขอคำยืนยันจากลูกค้า
-  3. ลูกค้ายืนยัน → บันทึก lead → ตั้ง sales_confirmed = True → ส่งต่อ Research
+  1. คุยกับลูกค้า ถามทีละคำถาม จดลงสมุดโน๊ต (sales_notebook) อย่างต่อเนื่อง
+  2. แยกข้อมูลส่วนตัวลูกค้า กับข้อมูลธุรกิจออกจากกัน
+  3. เมื่อข้อมูลธุรกิจครบ → สรุป → ขอคำยืนยัน
+  4. ลูกค้ายืนยัน → สร้าง handoff_brief (เฉพาะข้อมูลธุรกิจ) → sales_confirmed = True
+  5. handoff_brief คือสิ่งที่ agent อื่นเอาไปใช้ต่อ
 
-ห้าม: สร้าง content, เขียนเว็บ, วิเคราะห์ตลาด — นั่นไม่ใช่งาน Sales
+ห้าม: สร้าง content, เขียนเว็บ, วิเคราะห์ตลาด — ไม่ใช่งาน Sales
+ห้าม: เอาข้อมูลส่วนตัวลูกค้าใส่ใน handoff_brief
 """
 import logging
 import json
@@ -91,63 +94,122 @@ def _is_info_complete(data: dict) -> bool:
     return has_identity and has_needs and has_goals
 
 
+# Notebook template
+EMPTY_NOTEBOOK = {
+    "customer": {"name": "", "company": "", "contact": ""},
+    "business": {"pain_points": [], "needs": [], "goals": [], "timeline": "", "budget_hint": ""},
+    "conversation_summary": "",
+    "confidence": "low",
+}
+
+
+def _update_notebook(notebook: dict, collected: dict) -> dict:
+    """Merge new collected data into notebook (ไม่ overwrite ของเดิม)"""
+    nb = dict(notebook) if notebook else dict(EMPTY_NOTEBOOK)
+
+    # Customer info
+    cust = nb.setdefault("customer", {})
+    if collected.get("customer_name") and not cust.get("name"):
+        cust["name"] = collected["customer_name"]
+    if collected.get("company") and not cust.get("company"):
+        cust["company"] = collected["company"]
+
+    # Business info — merge lists
+    biz = nb.setdefault("business", {})
+    for field in ("pain_points", "needs", "goals"):
+        existing = biz.get(field, [])
+        new_items = collected.get(field, [])
+        if isinstance(new_items, list):
+            for item in new_items:
+                if item not in existing and item:
+                    existing.append(item)
+            biz[field] = existing
+    if collected.get("timeline") and not biz.get("timeline"):
+        biz["timeline"] = collected["timeline"]
+
+    return nb
+
+
+def _is_notebook_ready(notebook: dict) -> bool:
+    """Check if notebook has enough business info to confirm"""
+    biz = notebook.get("business", {}) if notebook else {}
+    cust = notebook.get("customer", {}) if notebook else {}
+    has_identity = bool(cust.get("name") or cust.get("company"))
+    has_needs = bool(biz.get("needs"))
+    has_goals = bool(biz.get("goals"))
+    return has_identity and has_needs and has_goals
+
+
+def _create_handoff_brief(notebook: dict) -> dict:
+    """Create clean business handoff — NO personal customer data"""
+    cust = notebook.get("customer", {}) if notebook else {}
+    biz = notebook.get("business", {}) if notebook else {}
+
+    return {
+        "project_name": f"{cust.get('company', cust.get('name', 'New Project'))}",
+        "industry": "",
+        "pain_points": biz.get("pain_points", []),
+        "needs": biz.get("needs", []),
+        "goals": biz.get("goals", []),
+        "timeline": biz.get("timeline", ""),
+        "budget_hint": biz.get("budget_hint", ""),
+        "context": notebook.get("conversation_summary", ""),
+        "handoff_note": "ข้อมูลนี้ถูกส่งต่อจาก Sales Agent — ใช้สำหรับเริ่มงาน business analysis เท่านั้น",
+    }
+
+
 def sales_node(state: AgentState) -> dict:
     """
-    Sales Agent — Multi-turn sales conversation
+    Sales Agent v3 — Notebook + Handoff
 
-    1. ถ้ายังไม่มี conversation → ทักทาย ถามคำถามแรก
-    2. มี conversation แล้ว → วิเคราะห์ว่าข้อมูลครบหรือยัง
-       - ยังไม่ครบ → ถามคำถามต่อไป (ทีละข้อ)
-       - ครบแล้ว → สรุป + ขอ confirmation
-    3. ลูกค้าตอบ "yes/ตกลง/ยืนยัน/เริ่มเลย" → บันทึก lead → sales_confirmed = True
+    1. หยิบสมุดโน๊ตจาก state (หรือเริ่มใหม่)
+    2. คุยกับลูกค้า → จดลง notebook
+    3. แยกข้อมูลส่วนตัว กับข้อมูลธุรกิจ
+    4. เมื่อข้อมูลธุรกิจครบ → ขอ confirmation
+    5. Confirmed → สร้าง handoff_brief (ธุรกิจล้วน) → ส่งต่อ
     """
     user_input = state.get("input", "").strip()
     conversation = state.get("conversation_context", "")
+    notebook = state.get("sales_notebook") or dict(EMPTY_NOTEBOOK)
     system_prompt = get_system_prompt("sales") or _default_sales_prompt()
-    output_format = get_output_format("sales") or ""
 
-    # Append current message to conversation
+    # Build full conversation
     if conversation:
         full_context = f"{conversation}\nลูกค้า: {user_input}"
     else:
         full_context = f"ลูกค้า: {user_input}"
 
-    # Parse what we've collected so far
+    # Update notebook with new info from conversation
     collected = _parse_conversation(full_context)
+    notebook = _update_notebook(notebook, collected)
 
     # ── Detect confirmation ──
     confirm_keywords = ["ตกลง", "ยืนยัน", "yes", "ok", "เริ่มเลย", "ทำเลย", "ดำเนินการ",
                         "โอเค", "okay", "จัดเลย", "ลุย", "ได้เลย", "เห็นด้วย", "agree",
                         "confirm", "proceed", "go ahead", "เริ่มต้น", "พร้อม"]
-    lower_input = user_input.lower()
-    is_confirm = any(kw in lower_input for kw in confirm_keywords)
+    is_confirm = any(kw in user_input.lower() for kw in confirm_keywords)
+    notebook_ready = _is_notebook_ready(notebook)
 
-    info_complete = _is_info_complete(collected)
+    # ═══ Confirmation → Create handoff ═══
+    if is_confirm and notebook_ready:
+        return _handle_confirmation_v3(state, notebook, full_context)
 
-    # If customer confirms AND info is complete → handoff
-    if is_confirm and info_complete:
-        return _handle_confirmation(state, collected, full_context)
-
-    # ── Call LLM for next response ──
+    # ═══ Continue conversation ═══
     try:
-        format_instruction = ""
-        if info_complete and output_format:
-            format_instruction = (
-                f"\n\n⚠️ ข้อมูลครบแล้ว! สรุปสิ่งที่เข้าใจ และถามลูกค้าว่า "
-                f"'ยืนยันให้ดำเนินการต่อหรือไม่?' "
-                f"ถ้าลูกค้าตอบตกลง ให้ตอบกลับเป็น JSON:\n{output_format}"
-            )
+        # Summarize notebook for LLM context
+        nb_summary = json.dumps({
+            "customer": f"{notebook['customer'].get('name','')} / {notebook['customer'].get('company','')}",
+            "business": notebook["business"],
+        }, ensure_ascii=False)
 
         reply = call_llm(
-            f"## บทสนทนาจนถึงตอนนี้\n{full_context}\n\n"
-            f"## ข้อมูลที่เก็บได้แล้ว\n{json.dumps(collected, ensure_ascii=False)}\n\n"
-            f"## สิ่งที่ต้องถามต่อ (ข้อมูลที่ยังขาด)\n"
-            f"{_missing_fields(collected)}\n\n"
+            f"## บทสนทนา\n{full_context}\n\n"
+            f"## สมุดโน๊ต (ข้อมูลที่เก็บได้แล้ว)\n{nb_summary}\n\n"
+            f"## ข้อมูลที่ยังขาด\n{_missing_notebook_fields(notebook)}\n\n"
             f"## คำสั่ง\n"
-            f"คุณคือนักขายมืออาชีพของ Aetox Works คุยกับลูกค้าด้วยน้ำเสียงเป็นกันเอง อบอุ่น "
-            f"ถามทีละคำถามเพื่อเก็บข้อมูล อย่ายัดทุกคำถามในรอบเดียว "
-            f"ถ้าข้อมูลครบ → สรุปความเข้าใจทั้งหมด และถามลูกค้าว่าต้องการให้ดำเนินการต่อหรือไม่"
-            f"{format_instruction}",
+            f"คุณคือนักขายมืออาชีพของ Aetox Works คุยกับลูกค้าด้วยน้ำเสียงเป็นกันเอง "
+            f"ถามทีละคำถาม อย่ายัดทุกคำถามในรอบเดียว "
+            f"ถ้าข้อมูลธุรกิจครบ → สรุปทั้งหมด ถามลูกค้าว่ายืนยันดำเนินการต่อไหม",
             system_prompt=system_prompt,
         )
         log.info("Sales reply: %s", reply[:100])
@@ -158,65 +220,77 @@ def sales_node(state: AgentState) -> dict:
     return {
         "results": {},
         "conversation_context": f"{full_context}\nAetox: {reply}",
+        "sales_notebook": notebook,
+        "handoff_brief": {},
         "messages": [("system", f"Sales: {reply[:150]}")],
         "sales_confirmed": False,
     }
 
 
-def _missing_fields(data: dict) -> str:
-    """Return list of missing fields as Thai instructions"""
+def _missing_notebook_fields(notebook: dict) -> str:
+    """Check what's still missing in the notebook"""
+    cust = notebook.get("customer", {})
+    biz = notebook.get("business", {})
     missing = []
-    if not data.get("customer_name") and not data.get("company"):
-        missing.append("- ยังไม่รู้ชื่อลูกค้าหรือชื่อบริษัท → ถาม")
-    if not data.get("pain_points"):
-        missing.append("- ยังไม่รู้ปัญหาที่ลูกค้าเจอ → ถาม")
-    if not data.get("needs"):
-        missing.append("- ยังไม่รู้ว่าลูกค้าต้องการให้ช่วยอะไร → ถาม")
-    if not data.get("goals"):
-        missing.append("- ยังไม่รู้เป้าหมายที่ลูกค้าอยากได้ → ถาม")
-    if not data.get("timeline"):
-        missing.append("- ยังไม่รู้กรอบเวลา → ถาม (แต่ไม่ต้องบังคับ)")
-    if not missing:
-        return "✅ ข้อมูลครบแล้ว! สรุปและขอคำยืนยัน"
-    return "\n".join(missing)
+    if not cust.get("name") and not cust.get("company"):
+        missing.append("- ชื่อ/บริษัท → ถาม")
+    if not biz.get("pain_points"):
+        missing.append("- ปัญหาที่เจอ → ถาม")
+    if not biz.get("needs"):
+        missing.append("- ต้องการให้ช่วยอะไร → ถาม")
+    if not biz.get("goals"):
+        missing.append("- เป้าหมาย → ถาม")
+    if not biz.get("timeline"):
+        missing.append("- กรอบเวลา → ถาม (ไม่บังคับ)")
+    return "\n".join(missing) if missing else "✅ ข้อมูลธุรกิจครบ — ขอคำยืนยัน!"
 
 
-def _handle_confirmation(state: AgentState, collected: dict, context: str) -> dict:
-    """Customer confirmed → save lead, set sales_confirmed = True"""
+def _handle_confirmation_v3(state: AgentState, notebook: dict, context: str) -> dict:
+    """Customer confirmed → save lead (personal + business) → create handoff (business only)"""
+    cust = notebook.get("customer", {})
+    biz = notebook.get("business", {})
+
+    # Save to CRM (everything — personal + business)
     lead_id = None
     try:
         init_db()
         lead_id = save_lead(
-            name=collected.get("customer_name", ""),
-            company=collected.get("company", ""),
-            pain_points=collected.get("pain_points", []),
-            needs=collected.get("needs", []),
-            goals=collected.get("goals", []),
-            timeline=collected.get("timeline", ""),
-            summary=collected.get("summary_thai", ""),
+            name=cust.get("name", ""),
+            company=cust.get("company", ""),
+            pain_points=biz.get("pain_points", []),
+            needs=biz.get("needs", []),
+            goals=biz.get("goals", []),
+            timeline=biz.get("timeline", ""),
+            summary=notebook.get("conversation_summary", ""),
             source="chat",
         )
         log.info("Sales CONFIRMED → lead #%d saved", lead_id)
     except Exception as e:
-        log.warning("Sales CRM error on confirm: %s", e)
+        log.warning("Sales CRM error: %s", e)
 
-    output = json.dumps({
+    # Create handoff brief (business only — NO personal data)
+    handoff = _create_handoff_brief(notebook)
+
+    sales_output = json.dumps({
         "agent": "sales",
         "lead_id": lead_id,
-        "lead_data": collected,
         "status": "confirmed",
+        "notebook_saved": True,
+        "handoff_created": True,
     }, ensure_ascii=False)
 
     confirm_msg = (
-        f"ขอบคุณที่ไว้วางใจครับ! 🎉\n"
-        f"ผมได้บันทึกข้อมูลของคุณเรียบร้อยแล้ว (Lead #{lead_id})\n"
-        f"กำลังส่งต่องานให้ทีม Research วิเคราะห์ตลาดให้คุณต่อครับ..."
+        f"ขอบคุณที่ไว้วางใจครับ!\n"
+        f"ผมได้จดข้อมูลลงสมุดเรียบร้อย (Lead #{lead_id})\n"
+        f"และส่งต่องานให้ทีมแล้วครับ..."
     )
 
     return {
-        "results": {"sales": output},
+        "results": {"sales": sales_output},
         "conversation_context": f"{context}\nAetox: {confirm_msg}",
-        "messages": [("system", f"Sales CONFIRMED: lead #{lead_id}")],
+        "sales_notebook": notebook,
+        "handoff_brief": handoff,
+        "messages": [("system", f"Sales CONFIRMED: lead #{lead_id}, handoff ready")],
         "sales_confirmed": True,
     }
 

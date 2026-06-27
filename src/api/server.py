@@ -246,6 +246,8 @@ async def run_pipeline(
             "error": None,
             "sales_confirmed": False,
             "conversation_context": req.conversation_context,
+            "sales_notebook": {},
+            "handoff_brief": {},
         })
 
         agents_used = [k for k in result.get("results", {})]

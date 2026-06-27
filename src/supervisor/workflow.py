@@ -72,6 +72,8 @@ def supervisor_node(state: AgentState) -> AgentState:
         "plan": f"Supervisor: รับคำสั่ง '{state['input']}'",
         "messages": [("system", f"Supervisor: รับคำสั่ง '{state['input']}'")],
         "conversation_context": ctx,
+        "sales_notebook": state.get("sales_notebook", {}),
+        "handoff_brief": state.get("handoff_brief", {}),
     }
 
 

@@ -81,15 +81,17 @@ def research_node(state: AgentState) -> dict:
     system_prompt = get_system_prompt("research") or "คุณคือ Research Agent"
     output_format = get_output_format("research") or ""
 
-    # Parse sales data จาก previous step
-    sales_data = None
-    sales_raw = state.get("results", {}).get("sales", "")
-    if sales_raw:
-        try:
-            sales_json = json_mod.loads(sales_raw)
-            sales_data = sales_json.get("lead_data", {})
-        except (json_mod.JSONDecodeError, AttributeError):
-            sales_data = None
+    # Parse handoff_brief from Sales Agent (preferred)
+    sales_data = state.get("handoff_brief") or {}
+    if not sales_data:
+        # Fallback: parse from raw sales results
+        sales_raw = state.get("results", {}).get("sales", "")
+        if sales_raw:
+            try:
+                sales_json = json_mod.loads(sales_raw)
+                sales_data = sales_json.get("lead_data", {})
+            except (json_mod.JSONDecodeError, AttributeError):
+                sales_data = {}
 
     # Build optimized search query
     query = _build_search_query(sales_data, user_input)
