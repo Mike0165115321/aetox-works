@@ -96,6 +96,32 @@ def test_pipeline_run(
     assert data["request_id"]
 
 
+@patch("src.supervisor.workflow.sales_node")
+def test_pipeline_run_with_context_continues_sales(mock_sales_node):
+    """POST /pipeline/run with existing context still invokes Sales"""
+    mock_sales_node.return_value = {
+        "results": {},
+        "messages": [("system", "Sales replied")],
+        "sales_confirmed": False,
+        "conversation_context": "[NB:abc123]\nลูกค้า: ดีครับ\nAetox: ขอทราบชื่อครับ\nลูกค้า: ผมชื่อไมค์ครับ\nAetox: ยินดีครับคุณไมค์ ขอทราบปัญหาหลักครับ?",
+        "sales_notebook": {"_nb_id": "abc123"},
+        "handoff_brief": {},
+    }
+
+    resp = client.post("/pipeline/run", json={
+        "input": "ผมชื่อไมค์ครับ",
+        "mode": "pipeline",
+        "conversation_context": "[NB:abc123]\nลูกค้า: ดีครับ\nAetox: ขอทราบชื่อครับ",
+    })
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "success"
+    assert data["sales_confirmed"] is False
+    assert "คุณไมค์" in data["conversation_context"]
+    mock_sales_node.assert_called_once()
+
+
 @patch("src.agents.data_agent.call_llm")
 @patch("src.agents.data_agent.list_leads")
 @patch("src.agents.data_agent.list_drafts")

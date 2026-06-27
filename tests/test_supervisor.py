@@ -84,6 +84,30 @@ def test_pipeline_next_starts_at_sales():
     assert pipeline_next_agent(state) == "sales"
 
 
+def test_pipeline_context_continues_at_sales():
+    """Existing chat context is input for Sales, not a completed Sales run"""
+    state = {
+        "input": "ผมชื่อไมค์ครับ", "plan": "", "current_agent": "",
+        "messages": [], "results": {}, "final_output": "", "error": None,
+        "sales_confirmed": False,
+        "conversation_context": "[NB:abc123]\nลูกค้า: ดีครับ\nAetox: ขอทราบชื่อครับ",
+        "sales_notebook": {},
+    }
+    assert pipeline_next_agent(state) == "sales"
+
+
+def test_pipeline_active_notebook_waits_for_confirmation():
+    """After Sales runs and returns a notebook, pipeline waits for confirmation"""
+    state = {
+        "input": "ผมชื่อไมค์ครับ", "plan": "", "current_agent": "",
+        "messages": [], "results": {}, "final_output": "", "error": None,
+        "sales_confirmed": False,
+        "conversation_context": "[NB:abc123]\nลูกค้า: ดีครับ\nAetox: ขอทราบชื่อครับ",
+        "sales_notebook": {"_nb_id": "abc123"},
+    }
+    assert pipeline_next_agent(state) == "final"
+
+
 def test_pipeline_sales_to_research():
     """Sales done AND confirmed → next is research"""
     state = {
@@ -226,4 +250,3 @@ def test_pipeline_full_run(
     assert "content" in result["results"]
     assert "dev" in result["results"]
     assert "data" in result["results"]
-

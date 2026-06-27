@@ -261,7 +261,8 @@ def sales_node(state: AgentState) -> dict:
     # ── Detect confirmation ──
     confirm_keywords = ["ตกลง", "ยืนยัน", "yes", "ok", "เริ่มเลย", "ทำเลย", "ดำเนินการ",
                         "โอเค", "okay", "จัดเลย", "ลุย", "ได้เลย", "เห็นด้วย", "agree",
-                        "confirm", "proceed", "go ahead", "เริ่มต้น", "พร้อม"]
+                        "confirm", "proceed", "go ahead", "เริ่มต้น", "พร้อม",
+                        "ใช่", "ถูกต้อง", "แน่นอน", "correct", "sure", "จัดไป"]
     is_confirm = any(kw in user_input.lower() for kw in confirm_keywords)
     notebook_ready = _is_notebook_ready(notebook)
 

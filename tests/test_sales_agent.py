@@ -93,6 +93,40 @@ def test_sales_continues_conversation(mock_llm):
     assert "conversation_context" in result
 
 
+@patch("src.agents.sales_agent.call_llm")
+def test_sales_loads_existing_notebook_from_context(mock_llm, tmp_path, monkeypatch):
+    """Existing [NB:...] marker → Sales reloads persisted notebook data"""
+    monkeypatch.setattr("src.tools.notebook._NOTEBOOK_DIR", tmp_path)
+    mock_llm.return_value = "รับทราบครับคุณไมค์ ตอนนี้เป้าหมายหลักคืออะไรครับ?"
+
+    from src.tools.notebook import create_notebook, update_notebook
+    from src.agents.sales_agent import sales_node
+
+    create_notebook("persist123")
+    update_notebook("persist123", "customer", {
+        "name": "ไมค์",
+        "company": "Aetox",
+        "contact": "",
+    })
+    update_notebook("persist123", "business", {
+        "pain_points": ["เว็บเก่าช้า"],
+        "needs": ["landing page"],
+        "goals": [],
+        "timeline": "",
+    })
+
+    result = sales_node(new_state(
+        "อยากเพิ่มยอดขาย",
+        ctx="[NB:persist123]\nลูกค้า: เว็บเก่าช้า\nAetox: ต้องการให้ช่วยอะไรครับ?",
+    ))
+
+    assert result["sales_confirmed"] is False
+    assert result["sales_notebook"]["_nb_id"] == "persist123"
+    assert result["sales_notebook"]["customer"]["name"] == "ไมค์"
+    assert result["sales_notebook"]["customer"]["company"] == "Aetox"
+    assert result["sales_notebook"]["business"]["needs"] == ["landing page"]
+
+
 # ── Sales Node: Confirmation ─────────────────────────────
 
 
