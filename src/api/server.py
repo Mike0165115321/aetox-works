@@ -11,9 +11,9 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi import FastAPI, Request, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 from pydantic import BaseModel, Field
 import uvicorn
 
@@ -157,6 +157,20 @@ async def trace_requests(request: Request, call_next):
 # Routes
 # ═══════════════════════════════════════════════════════════
 
+@app.get("/", response_class=HTMLResponse)
+async def dashboard():
+    """🎛️ Unified Dashboard — ภาพรวมระบบ + Chat + Leads + Content + Projects"""
+    from src.api.dashboard import DASHBOARD_HTML
+    return DASHBOARD_HTML
+
+
+@app.get("/chat", response_class=HTMLResponse)
+async def chat_page():
+    """💬 Aetox Chat — Multi-Agent Pipeline Showcase"""
+    from src.api.chat_ui import CHAT_HTML
+    return CHAT_HTML
+
+
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     """Health check endpoint"""
@@ -265,24 +279,98 @@ async def run_single_agent(
 
 
 # ═══════════════════════════════════════════════════════════
+# Dashboard Data APIs
+# ═══════════════════════════════════════════════════════════
+
+@app.get("/api/leads")
+async def api_leads(status: str | None = Query(None), limit: int = Query(50, le=200)):
+    """👥 ดึงรายการ leads พร้อมกรองตาม status"""
+    try:
+        from src.tools.crm import list_leads
+        leads = list_leads(status=status, limit=limit)
+        return {"success": True, "data": leads, "count": len(leads)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/api/leads/{lead_id}")
+async def api_lead_detail(lead_id: int):
+    """👤 ดึงข้อมูล lead แบบละเอียด"""
+    try:
+        from src.tools.crm import get_lead
+        lead = get_lead(lead_id)
+        if not lead:
+            raise HTTPException(status_code=404, detail="Lead not found")
+        return {"success": True, "data": lead}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.put("/api/leads/{lead_id}/status")
+async def api_lead_status(lead_id: int, status: str = Query(...)):
+    """🔄 อัปเดตสถานะ lead"""
+    try:
+        from src.tools.crm import update_lead_status
+        ok = update_lead_status(lead_id, status)
+        return {"success": ok}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/api/drafts")
+async def api_drafts(content_type: str | None = Query(None), limit: int = Query(50, le=200)):
+    """✍️ ดึงรายการ content drafts"""
+    try:
+        from src.tools.content_store import list_drafts
+        drafts = list_drafts(content_type=content_type, limit=limit)
+        return {"success": True, "data": drafts, "count": len(drafts)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/api/reports")
+async def api_reports(limit: int = Query(20, le=100)):
+    """📊 ดึงรายการ reports"""
+    try:
+        from src.tools.reporter import list_reports
+        reports = list_reports(limit=limit)
+        return {"success": True, "data": reports, "count": len(reports)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/api/projects")
+async def api_projects():
+    """🌐 ดึงรายการโปรเจคที่ Dev Agent สร้าง"""
+    try:
+        from src.tools.builder import list_projects
+        projects = list_projects()
+        return {"success": True, "data": projects, "count": len(projects)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# ═══════════════════════════════════════════════════════════
 # Entry Point
 # ═══════════════════════════════════════════════════════════
 
 def main():
-    """รัน API server"""
+    """Run API server"""
     host = os.getenv("AETOX_HOST", "127.0.0.1")
     port = int(os.getenv("AETOX_PORT", "8000"))
 
-    auth_status = "🔓 DEV MODE (no auth)" if not AETOX_API_KEY else "🔒 AUTH ENABLED"
+    auth_status = "DEV MODE (no auth)" if not AETOX_API_KEY else "AUTH ENABLED"
     print(f"""
-╔══════════════════════════════════════════╗
-║        🚀 Aetox Works API v1.0          ║
-╠══════════════════════════════════════════╣
-║  {auth_status:<36} ║
-║  📡 http://{host}:{port:<5}                    ║
-║  📖 http://{host}:{port}/docs              ║
-║  ❤️  http://{host}:{port}/health           ║
-╚══════════════════════════════════════════╝
++==========================================+
+|        Aetox Works API v1.0              |
++==========================================+
+|  {auth_status:<36} |
+|  API:     http://{host}:{port:<5}              |
+|  Docs:    http://{host}:{port}/docs           |
+|  Dashboard: http://{host}:{port}/             |
++==========================================+
 """)
 
     uvicorn.run(
