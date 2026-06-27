@@ -30,3 +30,5 @@ docker-data/
 
 data/
 output/
+
+src/api/static/
