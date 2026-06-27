@@ -361,6 +361,32 @@ async def api_projects():
         return {"success": False, "error": str(e)}
 
 
+@app.get("/api/notebooks")
+async def api_notebooks():
+    """📓 List all sales notebooks"""
+    try:
+        from src.tools.notebook import list_notebooks
+        notebooks = list_notebooks()
+        return {"success": True, "data": notebooks, "count": len(notebooks)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/api/notebooks/{lead_id}")
+async def api_notebook_read(lead_id: str):
+    """📖 Read a specific notebook"""
+    try:
+        from src.tools.notebook import read_notebook
+        content = read_notebook(lead_id)
+        if not content:
+            raise HTTPException(status_code=404, detail="Notebook not found")
+        return {"success": True, "data": content}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 # ═══════════════════════════════════════════════════════════
 # Entry Point
 # ═══════════════════════════════════════════════════════════

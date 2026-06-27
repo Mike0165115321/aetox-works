@@ -19,7 +19,8 @@ import re
 from src.supervisor import AgentState
 from src.config.agent_configs import get_system_prompt, get_output_format
 from src.llm.client import call_llm
-from src.tools.crm import init_db, save_lead
+from src.tools.crm import init_db, save_lead, update_lead_status
+from src.tools.notebook import create_notebook, update_notebook, lock_notebook
 
 log = logging.getLogger("aetox.agents.sales")
 
@@ -160,18 +161,30 @@ def _create_handoff_brief(notebook: dict) -> dict:
 
 def sales_node(state: AgentState) -> dict:
     """
-    Sales Agent v3 — Notebook + Handoff
+    Sales Agent v3 — Notebook + Handoff (file-based)
 
     1. หยิบสมุดโน๊ตจาก state (หรือเริ่มใหม่)
-    2. คุยกับลูกค้า → จดลง notebook
+    2. คุยกับลูกค้า → จดลง notebook → เขียนไฟล์ .md
     3. แยกข้อมูลส่วนตัว กับข้อมูลธุรกิจ
     4. เมื่อข้อมูลธุรกิจครบ → ขอ confirmation
-    5. Confirmed → สร้าง handoff_brief (ธุรกิจล้วน) → ส่งต่อ
+    5. Confirmed → lock notebook → สร้าง handoff_brief (ธุรกิจล้วน)
     """
     user_input = state.get("input", "").strip()
     conversation = state.get("conversation_context", "")
     notebook = state.get("sales_notebook") or dict(EMPTY_NOTEBOOK)
     system_prompt = get_system_prompt("sales") or _default_sales_prompt()
+
+    # Get or create notebook ID (temp until confirmed)
+    nb_id = notebook.get("_nb_id")
+    if not nb_id:
+        import time
+        nb_id = str(int(time.time() * 1000))[-8:]  # short timestamp-based ID
+        notebook["_nb_id"] = nb_id
+        try:
+            create_notebook(nb_id)
+            log.info("Sales notebook created: %s", nb_id)
+        except Exception as e:
+            log.warning("Sales notebook create error: %s", e)
 
     # Build full conversation
     if conversation:
@@ -179,9 +192,13 @@ def sales_node(state: AgentState) -> dict:
     else:
         full_context = f"ลูกค้า: {user_input}"
 
-    # Update notebook with new info from conversation
+    # Update notebook with new info
     collected = _parse_conversation(full_context)
     notebook = _update_notebook(notebook, collected)
+
+    # Write to notebook file on disk
+    _sync_notebook_to_disk(nb_id, notebook)
+    update_notebook(nb_id, "log", f"ลูกค้า: {user_input}")
 
     # ── Detect confirmation ──
     confirm_keywords = ["ตกลง", "ยืนยัน", "yes", "ok", "เริ่มเลย", "ทำเลย", "ดำเนินการ",
@@ -190,13 +207,12 @@ def sales_node(state: AgentState) -> dict:
     is_confirm = any(kw in user_input.lower() for kw in confirm_keywords)
     notebook_ready = _is_notebook_ready(notebook)
 
-    # ═══ Confirmation → Create handoff ═══
+    # ═══ Confirmation → Lock notebook + Save lead + Handoff ═══
     if is_confirm and notebook_ready:
-        return _handle_confirmation_v3(state, notebook, full_context)
+        return _handle_confirmation_v3(state, notebook, full_context, nb_id)
 
     # ═══ Continue conversation ═══
     try:
-        # Summarize notebook for LLM context
         nb_summary = json.dumps({
             "customer": f"{notebook['customer'].get('name','')} / {notebook['customer'].get('company','')}",
             "business": notebook["business"],
@@ -217,6 +233,9 @@ def sales_node(state: AgentState) -> dict:
         log.warning("Sales LLM error: %s", e)
         reply = "ขออภัยครับ ระบบมีปัญหาชั่วคราว กรุณาลองใหม่อีกครั้ง"
 
+    # Log Sales reply to notebook
+    update_notebook(nb_id, "log", f"Aetox: {reply[:200]}")
+
     return {
         "results": {},
         "conversation_context": f"{full_context}\nAetox: {reply}",
@@ -225,6 +244,23 @@ def sales_node(state: AgentState) -> dict:
         "messages": [("system", f"Sales: {reply[:150]}")],
         "sales_confirmed": False,
     }
+
+
+def _sync_notebook_to_disk(nb_id: str, notebook: dict):
+    """Write notebook state to .md file"""
+    if not nb_id:
+        return
+    try:
+        cust = notebook.get("customer", {})
+        biz = notebook.get("business", {})
+        update_notebook(nb_id, "customer", {
+            "name": cust.get("name", ""),
+            "company": cust.get("company", ""),
+            "contact": cust.get("contact", ""),
+        })
+        update_notebook(nb_id, "business", biz)
+    except Exception as e:
+        log.warning("Notebook sync error: %s", e)
 
 
 def _missing_notebook_fields(notebook: dict) -> str:
@@ -245,12 +281,12 @@ def _missing_notebook_fields(notebook: dict) -> str:
     return "\n".join(missing) if missing else "✅ ข้อมูลธุรกิจครบ — ขอคำยืนยัน!"
 
 
-def _handle_confirmation_v3(state: AgentState, notebook: dict, context: str) -> dict:
-    """Customer confirmed → save lead (personal + business) → create handoff (business only)"""
+def _handle_confirmation_v3(state: AgentState, notebook: dict, context: str, nb_id: str = "") -> dict:
+    """Customer confirmed → lock notebook → save lead → create handoff"""
     cust = notebook.get("customer", {})
     biz = notebook.get("business", {})
 
-    # Save to CRM (everything — personal + business)
+    # Save lead to CRM with full data
     lead_id = None
     try:
         init_db()
@@ -264,9 +300,14 @@ def _handle_confirmation_v3(state: AgentState, notebook: dict, context: str) -> 
             summary=notebook.get("conversation_summary", ""),
             source="chat",
         )
-        log.info("Sales CONFIRMED → lead #%d saved", lead_id)
+        log.info("Sales CONFIRMED: lead #%d saved", lead_id)
     except Exception as e:
-        log.warning("Sales CRM error: %s", e)
+        log.warning("Sales CRM save error: %s", e)
+
+    # Lock notebook file + add confirmation
+    lock_notebook(nb_id)
+    update_notebook(nb_id, "log", f"✅ ลูกค้ายืนยัน — Lead #{lead_id} — ส่งต่องาน")
+    log.info("Notebook locked: %s → Lead #%d", nb_id, lead_id)
 
     # Create handoff brief (business only — NO personal data)
     handoff = _create_handoff_brief(notebook)
@@ -275,13 +316,12 @@ def _handle_confirmation_v3(state: AgentState, notebook: dict, context: str) -> 
         "agent": "sales",
         "lead_id": lead_id,
         "status": "confirmed",
-        "notebook_saved": True,
-        "handoff_created": True,
+        "notebook": f"data/notebooks/lead_{lead_id}.md",
     }, ensure_ascii=False)
 
     confirm_msg = (
         f"ขอบคุณที่ไว้วางใจครับ!\n"
-        f"ผมได้จดข้อมูลลงสมุดเรียบร้อย (Lead #{lead_id})\n"
+        f"ผมได้บันทึกข้อมูลลงสมุดเรียบร้อย (Lead #{lead_id})\n"
         f"และส่งต่องานให้ทีมแล้วครับ..."
     )
 
@@ -290,7 +330,7 @@ def _handle_confirmation_v3(state: AgentState, notebook: dict, context: str) -> 
         "conversation_context": f"{context}\nAetox: {confirm_msg}",
         "sales_notebook": notebook,
         "handoff_brief": handoff,
-        "messages": [("system", f"Sales CONFIRMED: lead #{lead_id}, handoff ready")],
+        "messages": [("system", f"Sales CONFIRMED: lead #{lead_id}, notebook locked, handoff ready")],
         "sales_confirmed": True,
     }
 
