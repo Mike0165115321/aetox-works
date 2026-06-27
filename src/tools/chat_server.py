@@ -158,8 +158,8 @@ def create_app() -> FastAPI:
             for m in history[-6:]  # จำแค่ 6 ข้อความล่าสุด
         )
 
-        # เรียก LangGraph
-        graph = build_supervisor_graph()
+        # เรียก LangGraph — router mode (quick chat)
+        graph = build_supervisor_graph(mode="router")
         result = graph.invoke({
             "input": f"{context}\nลูกค้า: {message}" if context else message,
             "plan": "",

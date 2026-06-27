@@ -1,98 +1,190 @@
 """
 Aetox Works — Dev Agent 💻
-Pipeline step 4: สร้างเว็บ, feature, automation
+Pipeline step 4: รับ content → สร้างเว็บ, landing page, automation → ส่ง Data
 
 Tools:
-  - builder — generate_landing(), generate_html(), write_file(), serve_preview()
+  - builder — generate_landing(), generate_html(), write_file(), serve_preview(), list_projects()
+  - reporter — save_metric
 """
 import logging
 import json as json_mod
+import re
 
 from src.supervisor import AgentState
-from src.config.agent_configs import get_system_prompt
+from src.config.agent_configs import get_system_prompt, get_output_format
 from src.llm.client import call_llm
-from src.tools.builder import generate_landing, write_file, list_projects
+from src.tools.builder import (
+    generate_landing,
+    generate_html,
+    write_file,
+    serve_preview,
+    list_projects,
+)
 from src.tools.reporter import save_metric
 
 log = logging.getLogger("aetox.agents.dev")
+
+DEV_JSON_SCHEMA = {
+    "project_type": "landing",
+    "title": "",
+    "headline": "",
+    "subheadline": "",
+    "features": [],
+    "cta_text": "เริ่มต้นเลย",
+    "files_created": [],
+    "tech_stack": ["HTML", "CSS"],
+    "summary_thai": "",
+}
+
+
+def _extract_dev_json(text: str) -> dict:
+    """Extract JSON จาก LLM response"""
+    patterns = [
+        r"```(?:json)?\s*(\{.*?\})\s*```",
+        r"(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})",
+    ]
+    for pat in patterns:
+        m = re.search(pat, text, re.DOTALL)
+        if m:
+            try:
+                return json_mod.loads(m.group(1))
+            except json_mod.JSONDecodeError:
+                continue
+    return {}
 
 
 def dev_node(state: AgentState) -> dict:
     """
     Dev Agent node สำหรับ LangGraph
 
-    - รับ content จาก Content Agent
-    - วิเคราะห์ว่าต้องทำอะไร (landing, script, API)
-    - สร้างไฟล์ด้วย builder tools
-    - สรุปผลส่ง Data Agent
+    Pipeline step 4: รับ content จาก Content Agent → สร้างหน้าเว็บ → preview
+
+    Flow:
+      1. Parse content from previous step
+      2. LLM plans page structure + generates content
+      3. Build HTML using builder tools
+      4. Log metrics
     """
     user_input = state.get("input", "")
-    content_result = state.get("results", {}).get("content", "")
-    prompt = get_system_prompt("dev") or "คุณคือ Dev Agent"
+    system_prompt = get_system_prompt("dev") or "คุณคือ Dev Agent"
+    output_format = get_output_format("dev") or ""
 
-    # ใช้ LLM วางแผน + สร้างเนื้อหา
+    # Parse content from Content Agent
+    content_context = ""
+    content_raw = state.get("results", {}).get("content", "")
+    if content_raw:
+        try:
+            content_json = json_mod.loads(content_raw)
+            content_context = json_mod.dumps(content_json, ensure_ascii=False)
+        except (json_mod.JSONDecodeError, AttributeError):
+            content_context = content_raw[:1000]
+
+    # ── LLM Plan + Generate ──
     try:
-        plan = call_llm(
-            f"ความต้องการ: {user_input}\n\n"
-            f"Content ที่มี: {content_result}\n\n"
-            f"วางแผนว่าต้องสร้างอะไร (landing page, script, API) "
-            f"และให้เนื้อหาที่จะใส่ในหน้าเว็บ\n"
-            f"ตอบเป็นภาษาไทย พร้อม JSON: {{\"type\": \"...\", "
-            f"\"title\": \"...\", \"headline\": \"...\", "
-            f"\"subheadline\": \"...\", \"features\": [...]}}",
-            system_prompt=prompt,
+        format_instruction = (
+            f"\n\n⚠️ ตอบกลับเป็น JSON format นี้เท่านั้น:\n{output_format}"
+            if output_format else ""
         )
+        llm_response = call_llm(
+            f"## ความต้องการ\n{user_input}\n\n"
+            f"## Content จาก Content Agent\n{content_context}\n\n"
+            f"วางแผนและสร้าง: title, headline, subheadline, "
+            f"features (list of {{title, desc}}), cta_text, project_type "
+            f"{'landing' if 'landing' in user_input.lower() else 'website'}"
+            f"{format_instruction}",
+            system_prompt=system_prompt,
+        )
+        log.info("Dev LLM reply: %s", llm_response[:120])
     except Exception as e:
         log.warning("Dev LLM error: %s", e)
-        plan = '{"type":"landing","title":"Aetox Page","headline":' + \
-               f'"{user_input[:50]}","subheadline":"...","features":[]}}'
+        llm_response = json_mod.dumps({
+            "project_type": "landing",
+            "title": "Aetox Page",
+            "headline": user_input[:80],
+            "subheadline": "สร้างโดย Dev Agent",
+            "features": [{"title": "อัตโนมัติ", "desc": "ระบบ AI"}],
+        }, ensure_ascii=False)
 
-    # ลอง parse JSON จาก LLM response
-    page_info = {"title": "Aetox Page", "headline": user_input[:80]}
-    try:
-        # หา JSON block
-        text = plan
-        if "```json" in text:
-            text = text.split("```json")[1].split("```")[0]
-        elif "```" in text:
-            text = text.split("```")[1].split("```")[0]
-        parsed = json_mod.loads(text)
-        page_info.update(parsed)
-    except (json_mod.JSONDecodeError, IndexError):
-        pass
+    # Parse structured JSON
+    parsed = _extract_dev_json(llm_response)
+    if not parsed:
+        parsed = {
+            "project_type": "landing",
+            "title": "Aetox Page",
+            "headline": user_input[:80],
+            "subheadline": "",
+            "features": [],
+            "cta_text": "เริ่มต้นเลย",
+        }
 
-    # สร้างหน้าเว็บ
-    build_result = {}
+    project_type = parsed.get("project_type", "landing") or "landing"
+    title = parsed.get("title", user_input[:80])
+    headline = parsed.get("headline", user_input[:80])
+    subheadline = parsed.get("subheadline", "")
+    features = parsed.get("features", [])
+    cta_text = parsed.get("cta_text", "เริ่มต้นเลย")
+    tech_stack = parsed.get("tech_stack", ["HTML", "CSS"])
+
+    # ── Build ──
+    files_built = []
     try:
-        build_result = generate_landing(
-            title=page_info.get("title", "Aetox Page"),
-            headline=page_info.get("headline", user_input[:80]),
-            subheadline=page_info.get("subheadline", ""),
-            features=page_info.get("features", []),
-            output_subdir="aetox-latest",
-        )
-        log.info("Dev built: %s", build_result.get("path", ""))
+        if project_type in ("landing", "website"):
+            result = generate_landing(
+                title=title,
+                headline=headline,
+                subheadline=subheadline,
+                features=features,
+                cta_text=cta_text,
+                output_subdir="aetox-latest",
+            )
+            files_built.append({"path": result["path"], "type": project_type})
+            log.info("Dev built landing: %s", result["path"])
+
+        elif project_type == "api":
+            # Generate a simple FastAPI skeleton
+            api_code = f'''"""API: {title}"""
+from fastapi import FastAPI
+app = FastAPI(title="{title}")
+
+@app.get("/")
+def root():
+    return {{"message": "{headline}"}}
+'''
+            result = write_file(
+                f"output/websites/aetox-latest/{title.lower().replace(' ', '_')}_api.py",
+                api_code,
+            )
+            files_built.append({"path": result["path"], "type": "api"})
+
+        else:
+            # generic: generate HTML
+            result = generate_html(
+                filename=f"{title.lower().replace(' ', '-')[:30]}.html",
+                html_content=f"<h1>{headline}</h1><p>{subheadline}</p>",
+                output_subdir="aetox-latest",
+            )
+            files_built.append({"path": result["path"], "type": project_type})
     except Exception as e:
         log.warning("Dev build error: %s", e)
-        build_result = {"path": "(error)", "url": ""}
 
-    # Log metrics
+    # ── Log metrics ──
     try:
-        save_metric("dev", "pages_built", 1)
+        save_metric("dev", "pages_built", len(files_built))
+        save_metric("dev", "project_type", project_type)
     except Exception:
         pass
 
-    # Merge results
     merged = dict(state.get("results", {}))
     merged["dev"] = json_mod.dumps({
         "agent": "dev",
-        "type": page_info.get("type", "landing"),
-        "file_path": build_result.get("path", ""),
-        "url": build_result.get("url", ""),
+        "project_type": project_type,
+        "title": title,
+        "files_built": files_built,
+        "tech_stack": tech_stack,
         "status": "complete",
     }, ensure_ascii=False)
 
     return {
         "results": merged,
-        "messages": [("system", f"Dev: built {build_result.get('path', 'N/A')}")],
+        "messages": [("system", f"Dev: built {project_type} '{title}' ({len(files_built)} files)")],
     }

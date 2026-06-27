@@ -1,6 +1,10 @@
 # Aetox Works — Supervisor Workflow
 # LangGraph Supervisor-Worker Pipeline
 # Sales → Research → Content → Dev → Data
+#
+# Modes:
+#   pipeline (default) — sequential: วิ่งผ่านทุก agent ตามลำดับ
+#   router — single-agent: เลือก agent เดียวตาม intent
 
 import logging
 from langgraph.graph import StateGraph, START, END
@@ -17,9 +21,12 @@ from src.agents.data_agent import data_node
 logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
 log = logging.getLogger("aetox")
 
+# Pipeline order — ลำดับการทำงานแบบ sequential
+PIPELINE_ORDER = ["sales", "research", "content", "dev", "data"]
+
 
 def router_llm(state: AgentState) -> str:
-    """ใช้ LLM วิเคราะห์ intent และเลือก agent ที่เหมาะสม"""
+    """ใช้ LLM วิเคราะห์ intent และเลือก agent ที่เหมาะสม (router mode)"""
     user_input = state.get("input", "")
     agent_list = "\n".join(
         [f"- {name}: {desc}" for name, desc in AGENT_REGISTRY.items()]
@@ -67,28 +74,121 @@ def supervisor_node(state: AgentState) -> AgentState:
 
 def final_aggregator(state: AgentState) -> AgentState:
     """รวมผลลัพธ์จากทุก agent สรุปส่งผู้ใช้"""
-    results = state.get("results", {})
     # ถ้า Data Agent ทำเสร็จแล้ว มี final_output → ใช้เลย
     final = state.get("final_output", "")
     if final:
         return {"final_output": final}
 
-    summary_lines = [f"[{k}] {v[:200]}..." for k, v in results.items()]
+    results = state.get("results", {})
+    agent_names = [k for k in results.keys()]
+    summary_lines = [f"- [{k}] complete" for k in agent_names]
     summary = "\n".join(summary_lines)
-    log.info("Final output: %d results", len(results))
+    log.info("Final output: %d results from %s", len(results), agent_names)
     return {
-        "final_output": f"## Summary\n\n{summary}" if summary else "No results."
+        "final_output": f"## Pipeline Complete\n\n{summary}" if summary else "No results."
     }
 
 
-def build_supervisor_graph() -> StateGraph:
-    """สร้าง Supervisor-Worker Graph พร้อม pipeline agents"""
+def pipeline_next_agent(state: AgentState) -> str:
+    """
+    Pipeline router: วิ่งตามลำดับ sales → research → content → dev → data → final
+
+    ดูว่า agent ตัวสุดท้ายที่ทำงานคืออะไร → หาตัวถัดไปใน pipeline
+    """
+    results = state.get("results", {})
+
+    # หา agent สุดท้ายที่ทำเสร็จแล้ว
+    for agent_name in reversed(PIPELINE_ORDER):
+        if agent_name in results:
+            idx = PIPELINE_ORDER.index(agent_name)
+            if idx + 1 < len(PIPELINE_ORDER):
+                next_agent = PIPELINE_ORDER[idx + 1]
+                log.info("Pipeline: %s → %s", agent_name, next_agent)
+                return next_agent
+            else:
+                # ครบทุก agent → final
+                log.info("Pipeline: complete → final")
+                return "final"
+            break
+
+    # ถ้ายังไม่มี agent ไหนทำงานเลย → เริ่มที่ sales
+    log.info("Pipeline: start → sales")
+    return "sales"
+
+
+def build_pipeline_graph() -> StateGraph:
+    """
+    Pipeline Mode — Sequential: Sales → Research → Content → Dev → Data
+
+    ใช้สำหรับ production workflow ที่ต้องการทำทุกขั้นตอน
+    """
     graph = StateGraph(AgentState)
 
     graph.add_node("supervisor", supervisor_node)
     graph.add_node("final", final_aggregator)
 
-    # Agent nodes with real tools
+    # Agent nodes
+    graph.add_node("sales", sales_node)
+    graph.add_node("research", research_node)
+    graph.add_node("content", content_node)
+    graph.add_node("dev", dev_node)
+    graph.add_node("data", data_node)
+
+    # Start → supervisor → pipeline routing
+    graph.add_edge(START, "supervisor")
+    graph.add_conditional_edges("supervisor", pipeline_next_agent, {
+        "sales": "sales",
+        "research": "research",
+        "content": "content",
+        "dev": "dev",
+        "data": "data",
+        "final": "final",
+    })
+
+    # Pipeline chain: each agent → next in sequence
+    graph.add_conditional_edges("sales", pipeline_next_agent, {
+        "research": "research",
+        "content": "content",
+        "dev": "dev",
+        "data": "data",
+        "final": "final",
+    })
+    graph.add_conditional_edges("research", pipeline_next_agent, {
+        "content": "content",
+        "dev": "dev",
+        "data": "data",
+        "final": "final",
+    })
+    graph.add_conditional_edges("content", pipeline_next_agent, {
+        "dev": "dev",
+        "data": "data",
+        "final": "final",
+    })
+    graph.add_conditional_edges("dev", pipeline_next_agent, {
+        "data": "data",
+        "final": "final",
+    })
+    graph.add_conditional_edges("data", pipeline_next_agent, {
+        "final": "final",
+    })
+
+    graph.add_edge("final", END)
+
+    return graph.compile()
+
+
+def build_router_graph() -> StateGraph:
+    """
+    Router Mode — Single Agent: เลือก agent เดียวตาม intent
+
+    ใช้สำหรับ quick tasks ที่ต้องการ agent เดียว
+    """
+    graph = StateGraph(AgentState)
+
+    graph.add_node("supervisor", supervisor_node)
+    graph.add_node("final", final_aggregator)
+
+    # Agent nodes
     graph.add_node("sales", sales_node)
     graph.add_node("research", research_node)
     graph.add_node("content", content_node)
@@ -100,12 +200,28 @@ def build_supervisor_graph() -> StateGraph:
         name: name for name in AGENT_REGISTRY
     })
 
-    # Pipeline: เชื่อมแต่ละ agent ต่อกัน
-    # สำหรับ Phase 1: single-agent routing (router เลือก agent → final)
-    # สำหรับ Phase 2+: จะเปลี่ยนเป็น pipeline sequential
+    # Single agent → final
     for name in AGENT_REGISTRY:
         graph.add_edge(name, "final")
 
     graph.add_edge("final", END)
 
     return graph.compile()
+
+
+def build_supervisor_graph(mode: str = "pipeline") -> StateGraph:
+    """
+    สร้าง Supervisor-Worker Graph
+
+    Args:
+        mode: "pipeline" (sequential, default) หรือ "router" (single-agent)
+
+    Returns:
+        compiled StateGraph
+    """
+    if mode == "router":
+        log.info("Building graph: ROUTER mode (single-agent)")
+        return build_router_graph()
+
+    log.info("Building graph: PIPELINE mode (sequential)")
+    return build_pipeline_graph()

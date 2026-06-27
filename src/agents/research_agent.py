@@ -1,6 +1,6 @@
 """
 Aetox Works — Research Agent 🔍
-Pipeline step 2: หาข้อมูลตลาด, คู่แข่ง, keyword, insight
+Pipeline step 2: รับ leads จาก Sales → หาข้อมูลตลาด, คู่แข่ง, keyword, insight → ส่ง Content
 
 Tools:
   - searcher.web_search() — Firecrawl
@@ -9,88 +9,177 @@ Tools:
 """
 import logging
 import json as json_mod
+import re
 
 from src.supervisor import AgentState
-from src.config.agent_configs import get_system_prompt
+from src.config.agent_configs import get_system_prompt, get_output_format
 from src.llm.client import call_llm
-from src.tools.searcher import web_search, semantic_search
+from src.tools.searcher import web_search, semantic_search, scrape_url
 from src.tools.reporter import save_metric
 
 log = logging.getLogger("aetox.agents.research")
+
+# Default structure สำหรับ research output
+RESEARCH_JSON_SCHEMA = {
+    "market_overview": "",
+    "competitors": [],
+    "keywords": [],
+    "insights": [],
+    "references": [],
+    "summary_thai": "",
+}
+
+
+def _extract_research_json(text: str) -> dict:
+    """Extract JSON จาก LLM response (รองรับ code block + inline)"""
+    patterns = [
+        r"```(?:json)?\s*(\{.*?\})\s*```",
+        r"(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})",
+    ]
+    for pat in patterns:
+        m = re.search(pat, text, re.DOTALL)
+        if m:
+            try:
+                return json_mod.loads(m.group(1))
+            except json_mod.JSONDecodeError:
+                continue
+    return {}
+
+
+def _build_search_query(sales_data: dict | None, user_input: str) -> str:
+    """สร้าง search query ที่ดีจากข้อมูล sales + user input"""
+    if not sales_data:
+        return user_input
+
+    parts = []
+    if sales_data.get("company"):
+        parts.append(sales_data["company"])
+    if sales_data.get("needs"):
+        parts.extend(sales_data["needs"][:2])
+    if sales_data.get("pain_points"):
+        parts.extend(sales_data["pain_points"][:1])
+
+    if parts:
+        return " ".join(parts)
+    return user_input
 
 
 def research_node(state: AgentState) -> dict:
     """
     Research Agent node สำหรับ LangGraph
 
-    - รับสรุปจาก Sales Agent
-    - ค้นหาข้อมูลตลาด, คู่แข่ง, keyword
-    - เรียก LLM สรุป findings
-    - ส่ง structured report → Content Agent
+    Pipeline step 2: รับ leads/summary จาก Sales → ค้นหา → สรุป structured report → ส่ง Content
+
+    Flow:
+      1. Parse sales results → build search query
+      2. Web search + Semantic search
+      3. Scrape top URLs for detail (ถ้ามี)
+      4. LLM synthesize → structured JSON
+      5. Log metrics
     """
     user_input = state.get("input", "")
-    sales_result = state.get("results", {}).get("sales", "")
-    prompt = get_system_prompt("research") or "คุณคือ Research Agent"
+    system_prompt = get_system_prompt("research") or "คุณคือ Research Agent"
+    output_format = get_output_format("research") or ""
 
-    # ค้นหาข้อมูล
-    search_results = []
+    # Parse sales data จาก previous step
+    sales_data = None
+    sales_raw = state.get("results", {}).get("sales", "")
+    if sales_raw:
+        try:
+            sales_json = json_mod.loads(sales_raw)
+            sales_data = sales_json.get("lead_data", {})
+        except (json_mod.JSONDecodeError, AttributeError):
+            sales_data = None
+
+    # Build optimized search query
+    query = _build_search_query(sales_data, user_input)
+    log.info("Research query: %s", query[:100])
+
+    # ── Web Search ──
+    web_results = []
     try:
-        results = web_search(user_input, num_results=5)
-        search_results.extend(results)
-        log.info("Research: web search → %d results", len(results))
+        web_results = web_search(query, num_results=5)
+        log.info("Research: web search → %d results", len(web_results))
     except Exception as e:
         log.warning("Research web_search error: %s", e)
 
-    # Semantic search เพิ่ม
-    semantic_results = []
+    # ── Semantic Search ──
+    exa_results = []
     try:
-        results = semantic_search(user_input, num_results=3)
-        semantic_results.extend(results)
-        log.info("Research: semantic search → %d results", len(results))
+        exa_results = semantic_search(query, num_results=3)
+        log.info("Research: semantic search → %d results", len(exa_results))
     except Exception as e:
         log.warning("Research semantic_search error: %s", e)
 
-    # LLM สรุป findings
+    # ── Deep scrape top URLs (max 2) ──
+    deep_content = ""
+    top_urls = [r.get("url", "") for r in web_results[:2] if r.get("url")]
+    for url in top_urls:
+        try:
+            content = scrape_url(url)
+            if content and not content.startswith("["):
+                deep_content += f"\n--- Content from {url} ---\n{content[:2000]}\n"
+        except Exception as e:
+            log.warning("Research scrape_url error %s: %s", url, e)
+
+    # ── LLM Synthesize ──
     try:
         search_text = ""
-        for r in search_results:
-            search_text += f"- {r.get('title', '')}: {r.get('description', '')}\n"
-        for r in semantic_results:
+        for r in web_results:
+            search_text += f"- [{r.get('title', '')}]({r.get('url', '')}): {r.get('description', '')}\n"
+        for r in exa_results:
             search_text += f"- [Exa] {r.get('title', '')}: {r.get('text', '')[:300]}\n"
 
         if not search_text:
-            search_text = "(ไม่พบผลการค้นหา — ใช้เฉพาะ LLM)"
+            search_text = "(ไม่พบผลการค้นหา — ใช้เฉพาะ LLM knowledge)"
+
+        sales_context = json_mod.dumps(sales_data, ensure_ascii=False) if sales_data else user_input
+        format_instruction = (
+            f"\n\n⚠️ ตอบกลับเป็น JSON format นี้เท่านั้น:\n{output_format}"
+            if output_format else ""
+        )
 
         reply = call_llm(
-            f"ความต้องการลูกค้า: {user_input}\n\n"
-            f"ผลลัพธ์จาก Sales: {sales_result}\n\n"
-            f"ข้อมูลที่ค้นหาได้:\n{search_text}\n\n"
-            f"สรุปข้อมูลตลาด คู่แข่ง และ insight ที่เกี่ยวข้อง "
-            f"(ภาษาไทย) พร้อม JSON output",
-            system_prompt=prompt,
+            f"## ลูกค้าต้องการ\n{sales_context}\n\n"
+            f"## ผลการค้นหา\n{search_text}\n"
+            f"{deep_content}\n\n"
+            f"## หน้าที่\nสรุปข้อมูลตลาด คู่แข่ง keywords และ insight "
+            f"ที่เกี่ยวข้องกับการตัดสินใจของลูกค้าเป็นภาษาไทย{format_instruction}",
+            system_prompt=system_prompt,
         )
+        log.info("Research LLM reply: %s", reply[:120])
     except Exception as e:
         log.warning("Research LLM error: %s", e)
-        reply = f"[Research Agent] วิเคราะห์ตลาดจาก: {user_input[:100]}..."
+        reply = f"[Research Agent] วิเคราะห์ตลาดสำหรับ: {user_input[:100]}..."
 
-    # Log metrics
+    # ── Parse structured JSON ──
+    parsed = _extract_research_json(reply)
+    if parsed:
+        findings = parsed
+    else:
+        findings = {**RESEARCH_JSON_SCHEMA, "summary_thai": reply[:500]}
+
+    # ── Log metrics ──
+    total_sources = len(web_results) + len(exa_results)
     try:
-        save_metric("research", "searches_done", len(search_results) + len(semantic_results))
+        save_metric("research", "searches_done", total_sources)
+        save_metric("research", "deep_scrapes", len(top_urls))
     except Exception:
         pass
 
     output = json_mod.dumps({
         "agent": "research",
-        "findings": reply,
-        "sources": len(search_results) + len(semantic_results),
+        "findings": findings,
+        "raw_reply": reply[:300],
+        "sources": total_sources,
+        "deep_scrapes": len(top_urls),
         "status": "complete",
     }, ensure_ascii=False)
 
-    # Merge results เพื่อไม่ให้ทับของ agent ก่อนหน้า
     merged = dict(state.get("results", {}))
     merged["research"] = output
 
     return {
         "results": merged,
-        "messages": [("system", f"Research: found {len(search_results)+len(semantic_results)} sources")],
+        "messages": [("system", f"Research: {total_sources} sources → {findings.get('summary_thai', '')[:100]}")],
     }

@@ -31,71 +31,81 @@
 
 ---
 
-## Phase 2: Agent ที่ 1 — Sales Agent (คุยลูกค้า 🗣️)
+## Phase 2: Agent ที่ 1 — Sales Agent (คุยลูกค้า 🗣️) ✅
 
 > **Pipeline step 1:** เก็บโจทย์ลูกค้า, pain point, สรุป需求 → ส่ง Research
-> **เป้าหมาย:** Agent ที่คุยกับลูกค้าผ่าน Web Chat/Email สรุปความต้องการ ส่งต่องาน
+> **เป้าหมาย:** Agent ที่คุยกับลูกค้าผ่าน Web Chat สรุปความต้องการ ส่งต่องาน
 
-- [ ] **2.1** Sales Agent prompt — personality + workflow
-- [ ] **2.2** Web Chat UI — ตอบลูกค้าผ่านเว็บ
-- [ ] **2.3** เชื่อมต่อ Gmail (ผ่าน Gmail MCP)
-- [ ] **2.4** CRM module — บันทึกประวัติลูกค้า (SQLite)
-- [ ] **2.5** Summary generator — สรุปบทสนทนาเป็น structured data → ส่ง Research
-- [ ] **2.6** Tests
+- [x] **2.1** Sales Agent prompt — personality + workflow
+- [x] **2.2** Web Chat UI — ตอบลูกค้าผ่านเว็บ
+- [x] ~~**2.3** เชื่อมต่อ Gmail (ผ่าน Gmail MCP)~~ — ตัดออกเพื่อลดความซับซ้อน
+- [x] **2.4** CRM module — บันทึกประวัติลูกค้า (SQLite)
+- [x] **2.5** Summary generator — สรุปบทสนทนาเป็น structured data → ส่ง Research
+- [x] **2.6** Tests (12 tests)
 
 ---
 
-## Phase 3: Agent ที่ 2 — Research Agent (ค้นหา 🔍)
+## Phase 3: Agent ที่ 2 — Research Agent (ค้นหา 🔍) ✅
 
 > **Pipeline step 2:** หาข้อมูลตลาด, คู่แข่ง, keyword, insight → ส่ง Content
 > **เป้าหมาย:** Agent ที่รับ需求จาก Sales → ค้นหาข้อมูลตลาด คู่แข่ง และ insight
 
-- [ ] **3.1** Research Agent prompt
-- [ ] **3.2** Firecrawl integration (search + scrape)
-- [ ] **3.3** Exa integration (semantic search)
-- [ ] **3.4** รายงาน structured data — สรุป insights → ส่ง Content Agent
-- [ ] **3.5** Tests
+- [x] **3.1** Research Agent prompt
+- [x] **3.2** Firecrawl integration (search + scrape)
+- [x] **3.3** Exa integration (semantic search)
+- [x] **3.4** รายงาน structured data — สรุป insights → ส่ง Content Agent
+- [x] **3.5** Tests (9 tests)
 
 ---
 
-## Phase 4: Agent ที่ 3 — Content Agent (เขียนคอนเทนต์ ✍️)
+## Phase 4: Agent ที่ 3 — Content Agent (เขียนคอนเทนต์ ✍️) ✅
 
 > **Pipeline step 3:** เขียน copy, landing content, article → ส่ง Dev
 > **เป้าหมาย:** Agent ที่รับข้อมูลจาก Research → เขียน content ทุกประเภท
 
-- [ ] **4.1** Content Agent prompt
-- [ ] **4.2** Landing page copy generator
-- [ ] **4.3** Blog/article generator
-- [ ] **4.4** Social media / Email copy generator
-- [ ] **4.5** ส่ง content → Dev Agent
+- [x] **4.1** Content Agent prompt
+- [x] **4.2** Landing page copy generator
+- [x] **4.3** Blog/article generator
+- [x] **4.4** Social media / Email copy generator
+- [x] **4.5** ส่ง content → Dev Agent
+- [x] Tests (10 tests)
 
 ---
 
-## Phase 5: Agent ที่ 4 — Dev Agent (สร้างเว็บ 💻)
+## Phase 5: Agent ที่ 4 — Dev Agent (สร้างเว็บ 💻) ✅
 
 > **Pipeline step 4:** สร้างเว็บ, feature, automation → ส่ง Data
 > **เป้าหมาย:** Agent ที่รับ content → สร้างหน้าเว็บ / feature / automation
 
-- [ ] **5.1** Dev Agent prompt
-- [ ] **5.2** HTML/CSS/JS generator — สร้างหน้าเว็บจาก requirement
-- [ ] **5.3** Local preview server
-- [ ] **5.4** Deploy module — ขึ้น GitHub Pages หรือ server จริง
-- [ ] **5.5** Human-in-the-loop — ให้คน approve ก่อน deploy
-- [ ] **5.6** Tests
+- [x] **5.1** Dev Agent prompt
+- [x] **5.2** HTML/CSS/JS generator — สร้างหน้าเว็บจาก requirement
+- [x] **5.3** Local preview server
+- [x] ~~**5.4** Deploy module~~ — Phase 7
+- [x] ~~**5.5** Human-in-the-loop~~ — Phase 7
+- [x] **5.6** Tests (5 tests)
 
 ---
 
-## Phase 6: Agent ที่ 5 — Data Agent (วัดผล 📊)
+## Phase 6: Agent ที่ 5 — Data Agent (วัดผล 📊) ✅
 
 > **Pipeline step 5:** วิเคราะห์ผลลัพธ์ lead/content/performance → สรุปส่งลูกค้า
 > **เป้าหมาย:** Agent ที่รวบรวมผลลัพธ์จากทุก agent วิเคราะห์และสรุป
 
-- [ ] **6.1** Data Agent prompt
-- [ ] **6.2** รองรับ CSV / JSON / logs
-- [ ] **6.3** สร้างกราฟ + report (matplotlib)
-- [ ] **6.4** Dashboard พื้นฐาน
-- [ ] **6.5** สรุปผล → ส่งกลับลูกค้า
-- [ ] **6.6** Tests
+- [x] **6.1** Data Agent prompt
+- [x] **6.2** รองรับ CSV / JSON / logs
+- [x] ~~**6.3** สร้างกราฟ + report (matplotlib)~~ — ใช้ LLM summary แทน
+- [x] ~~**6.4** Dashboard พื้นฐาน~~ — Phase 7
+- [x] **6.5** สรุปผล → ส่งกลับลูกค้า
+- [x] **6.6** Tests (6 tests)
+
+---
+
+## ⚡ Pipeline Mode — Sequential Execution ✅
+
+- [x] `build_pipeline_graph()` — Sales → Research → Content → Dev → Data → Final
+- [x] `build_router_graph()` — Single-agent routing (เดิม)
+- [x] `build_supervisor_graph(mode="pipeline")` — default = pipeline
+- [x] `pipeline_next_agent()` — auto-advance ตามลำดับ
 
 ---
 
