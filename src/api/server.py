@@ -158,17 +158,17 @@ async def trace_requests(request: Request, call_next):
 # ═══════════════════════════════════════════════════════════
 
 @app.get("/", response_class=HTMLResponse)
-async def dashboard():
-    """🎛️ Unified Dashboard — ภาพรวมระบบ + Chat + Leads + Content + Projects"""
-    from src.api.dashboard import DASHBOARD_HTML
-    return DASHBOARD_HTML
-
-
-@app.get("/chat", response_class=HTMLResponse)
 async def chat_page():
-    """💬 Aetox Chat — Multi-Agent Pipeline Showcase"""
+    """💬 Aetox Chat — Multi-Agent Pipeline Showcase (Main Page)"""
     from src.api.chat_ui import CHAT_HTML
     return CHAT_HTML
+
+
+@app.get("/admin", response_class=HTMLResponse)
+async def dashboard():
+    """🎛️ Admin Dashboard — จัดการระบบ"""
+    from src.api.dashboard import DASHBOARD_HTML
+    return DASHBOARD_HTML
 
 
 @app.get("/health", response_model=HealthResponse)

@@ -145,7 +145,7 @@ tr:hover { background: #fafbfc; }
 <div class="topbar">
   <h1>🚀 Aetox Works</h1>
   <div class="health">
-    <a href="/chat" style="color:var(--accent);text-decoration:none;font-weight:600;font-size:0.9em;margin-right:12px">💬 Chat</a>
+    <a href="/" style="color:var(--accent);text-decoration:none;font-weight:600;font-size:0.9em;margin-right:12px">💬 Chat</a>
     <span class="health-dot" id="healthDot"></span>
     <span id="uptime">--</span>
   </div>
@@ -158,7 +158,7 @@ tr:hover { background: #fafbfc; }
 
   <!-- Quick Actions -->
   <div class="quick-actions">
-    <a href="/chat" class="btn btn-accent" style="text-decoration:none">💬 Open Chat</a>
+    <a href="/" class="btn btn-accent" style="text-decoration:none">💬 Back to Chat</a>
     <button class="btn btn-outline" onclick="refreshAll()">🔄 Refresh</button>
   </div>
 

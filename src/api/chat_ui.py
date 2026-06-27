@@ -166,9 +166,9 @@ body { font-family: -apple-system, 'Noto Sans Thai', 'Segoe UI', sans-serif;
 <div class="header">
   <h1><span class="logo-dot"></span> Aetox Works</h1>
   <nav>
-    <a href="/chat" class="active">💬 Chat</a>
-    <a href="/">📊 Dashboard</a>
-    <a href="/docs">📖 API Docs</a>
+    <a href="/" class="active">💬 Chat</a>
+    <a href="/admin">⚙️ Admin</a>
+    <a href="/docs">📖 API</a>
   </nav>
 </div>
 
@@ -314,7 +314,7 @@ function addResultCard(data) {
       <div class="agent-steps">${stepsHtml}</div>
       <div class="result-sections">${sectionsHtml}</div>
       <div class="result-actions">
-        <a href="/" class="btn btn-outline">📊 View Dashboard</a>
+        <a href="/admin" class="btn btn-outline">📊 View Admin</a>
         <button class="btn btn-accent" onclick="this.textContent='Copied!';navigator.clipboard.writeText(document.getElementById('fullOutput')?.textContent||'')">📋 Copy Report</button>
       </div>
       <div style="display:none" id="fullOutput">${esc(data.output||'')}</div>
