@@ -394,41 +394,23 @@ function stepLoading(card,i){
 
 function addResult(d){
   const agents = d.agents_used||[];
-  const agentResults = d.results||{};
   const steps = A.map(a=>{
     const ok=agents.includes(a);
     return `<div class="rc-step${ok?' done':''}" data-a="${a}"><span class="si">${I[a]}</span>${N[a]}</div>`;
   }).join('');
 
-  // Build per-agent content sections
-  const sections = A.filter(a=>agents.includes(a)).map(a=>{
-    const r = agentResults[a]||{};
-    let content = '';
-    if(a==='sales') content = `Lead #${r.lead_id||'?'} — ${r.status||'complete'}\n📓 ${r.notebook||''}`;
-    else if(a==='research') content = `Sources: ${r.sources||0}\n${r.summary||''}\nKeywords: ${(r.keywords||[]).join(', ')}`;
-    else if(a==='content') content = `Draft #${r.draft_id||'?'} — ${r.content_type||'?'}\n📝 ${r.title||''}\n${r.body_preview||''}`;
-    else if(a==='dev') content = `Type: ${r.project_type||'?'}\n📄 ${(r.files||[]).join('\n📄 ')||'no files'}`;
-    else if(a==='data') content = `Report #${r.report_id||'?'} — ${r.overall_status||''}\n${r.summary||''}`;
-    return `<details class="rc-section"${a==='sales'?' open':''}>
-      <summary><span class="tag ${T[a]}">${I[a]} ${N[a]}</span> Complete</summary>
-      <div class="content">${esc(content)}</div></details>`;
-  }).join('');
-
-  // Full output section
-  const fullSection = d.output ? `<details class="rc-section">
-    <summary><span class="tag tag-a">📋 Full Report</span></summary>
-    <div class="content">${esc(d.output)}</div></details>` : '';
+  // Simple summary for customer — no internal details
+  const dataResult = (d.results||{}).data||{};
+  const summary = dataResult.summary || d.output?.slice(0,300) || 'Pipeline completed successfully.';
 
   const card=document.createElement('div');card.innerHTML=`
     <div class="result-card">
       <div class="rc-header"><h3><span style="color:var(--green)">&#10003;</span> Pipeline Complete</h3><span class="rc-time">${d.elapsed_ms}ms</span></div>
       <div class="rc-steps">${steps}</div>
-      <div class="rc-body">${sections}${fullSection}</div>
+      <div style="padding:16px 22px;font-size:0.9em;line-height:1.6;color:var(--muted)">${esc(summary)}</div>
       <div class="rc-actions">
-        <a href="/admin" class="btn btn-ghost">View Admin</a>
-        <button class="btn btn-primary" onclick="copyReport(this)">Copy Report</button>
+        <span style="font-size:0.78em;color:var(--muted)">ระบบกำลังดำเนินการต่อ — รอสักครู่</span>
       </div>
-      <div style="display:none" id="fullOutput">${esc(d.output||'')}</div>
     </div>`;
   ca.appendChild(card.firstElementChild);ca.scrollTop=ca.scrollHeight;
 }

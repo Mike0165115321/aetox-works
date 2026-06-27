@@ -111,6 +111,13 @@ class StatusResponse(BaseModel):
 
 
 # ═══════════════════════════════════════════════════════════
+# In-memory cache for last pipeline result (admin viewing)
+# ═══════════════════════════════════════════════════════════
+
+_last_pipeline: dict = {}
+
+
+# ═══════════════════════════════════════════════════════════
 # FastAPI App
 # ═══════════════════════════════════════════════════════════
 
@@ -256,6 +263,18 @@ async def run_pipeline(
 
         elapsed_ms = int((time.time() - start) * 1000)
         log.info("[%s] Pipeline done — %d agents, %dms", req_id, len(agents_used), elapsed_ms)
+
+        summary = _summarize_results(result.get("results", {}))
+        global _last_pipeline
+        _last_pipeline = {
+            "request_id": req_id,
+            "input": req.input[:200],
+            "agents_used": agents_used,
+            "elapsed_ms": elapsed_ms,
+            "results": summary,
+            "output": output,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
 
         return PipelineResponse(
             request_id=req_id,
@@ -435,6 +454,14 @@ def _summarize_results(results: dict) -> dict:
     return summary
 
 
+@app.get("/api/last-pipeline")
+async def api_last_pipeline():
+    """🔍 ดูผล pipeline ล่าสุด (สำหรับ admin)"""
+    if not _last_pipeline:
+        return {"success": True, "data": None, "message": "No pipeline has been run yet"}
+    return {"success": True, "data": _last_pipeline}
+
+
 # ═══════════════════════════════════════════════════════════
 # Entry Point
 # ═══════════════════════════════════════════════════════════
@@ -442,7 +469,7 @@ def _summarize_results(results: dict) -> dict:
 def main():
     """Run API server"""
     host = os.getenv("AETOX_HOST", "127.0.0.1")
-    port = int(os.getenv("AETOX_PORT", "8000"))
+    port = int(os.getenv("AETOX_PORT", "8006"))
 
     auth_status = "DEV MODE (no auth)" if not AETOX_API_KEY else "AUTH ENABLED"
     print(f"""

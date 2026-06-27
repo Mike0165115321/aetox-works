@@ -226,7 +226,9 @@ function renderOverview(){
   document.getElementById('overviewPanel').innerHTML=`
     <h3 style="font-size:0.95em;margin-bottom:14px">System Metrics</h3>
     <table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>${items}</tbody></table>
-    <p style="margin-top:14px;color:var(--muted);font-size:0.82em">Leads: ${S.leads.length} &middot; Drafts: ${S.drafts.length} &middot; Projects: ${S.projects.length}</p>`;
+    <p style="margin-top:14px;color:var(--muted);font-size:0.82em">Leads: ${S.leads.length} &middot; Drafts: ${S.drafts.length} &middot; Projects: ${S.projects.length}</p>
+    <div id="lastPipelineSection"></div>`;
+  fetchLastPipeline();
 }
 
 function renderLeads(){
@@ -275,6 +277,31 @@ async function viewNotebook(id){
   document.getElementById('notebooksPanel').innerHTML=`
     <div class="nb-back" onclick="renderNotebooks()">← Back to list</div>
     <div class="nb-viewer">${esc(r.data)}</div>`;
+}
+
+async function fetchLastPipeline(){
+  const r=await fJSON('/api/last-pipeline');
+  if(!r.success||!r.data){document.getElementById('lastPipelineSection').innerHTML='';return}
+  const d=r.data;
+  const steps = ['sales','research','content','dev','data'].map(a=>{
+    const ok=(d.agents_used||[]).includes(a);
+    return `<span style="padding:4px 8px;border-radius:6px;font-size:0.72em;font-weight:700;${ok?'background:#ecfdf5;color:#059669':'background:#f3f4f6;color:#9ca3af'}">${a}</span>`;
+  }).join(' ');
+  const details = ['sales','research','content','dev','data'].filter(a=>(d.agents_used||[]).includes(a)).map(a=>{
+    const rd=d.results?.[a]||{};
+    let body='';
+    if(a==='sales') body=`Lead #${rd.lead_id||'?'} · Status: ${rd.status||'?'}`;
+    else if(a==='research') body=`Sources: ${rd.sources||0} · ${rd.summary||''}`;
+    else if(a==='content') body=`Draft #${rd.draft_id||'?'} · ${rd.title||''}`;
+    else if(a==='dev') body=`Type: ${rd.project_type||'?'} · Files: ${(rd.files||[]).length}`;
+    else if(a==='data') body=`Report #${rd.report_id||'?'} · ${rd.overall_status||''}`;
+    return `<details style="margin-top:6px"><summary style="font-size:0.82em;font-weight:600;cursor:pointer">${a}</summary><div style="padding:6px 0 6px 14px;font-size:0.8em;color:var(--muted)">${esc(body)}</div></details>`;
+  }).join('');
+  document.getElementById('lastPipelineSection').innerHTML=`
+    <h3 style="font-size:0.9em;margin-top:20px;margin-bottom:10px">Last Pipeline Run</h3>
+    <div style="font-size:0.82em;color:var(--muted);margin-bottom:8px">${d.input||''} · ${d.elapsed_ms}ms · ${d.timestamp?.slice(11,19)||''}</div>
+    <div style="margin-bottom:8px">${steps}</div>
+    ${details}`;
 }
 
 function esc(s){return(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
