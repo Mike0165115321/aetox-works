@@ -109,16 +109,18 @@
 
 ---
 
-## Phase 7: Production — FastAPI Server & Deployment
+## Phase 7: Production — FastAPI Server ✅
 
-> **เป้าหมาย:** ระบบพร้อมใช้งานจริง มี API, monitoring, auto-scaling
+> **เป้าหมาย:** ระบบพร้อมใช้งานผ่าน API มี authentication, monitoring
 
-- [ ] **6.1** FastAPI server — endpoints สำหรับรับคำสั่ง
-- [ ] **6.2** Authentication — ใครเรียกใช้ระบบได้บ้าง
-- [ ] **6.3** LangSmith monitoring — ดู logs ทุก step
-- [ ] **6.4** Human-in-the-loop approval system
-- [ ] **6.5** Dockerize — Dockerfile + docker-compose
-- [ ] **6.6** Deploy — ขึ้น server จริง (VPS / Cloud)
+- [x] **7.1** FastAPI server — endpoints (`/pipeline/run`, `/agent/run`, `/health`, `/status`)
+- [x] **7.2** Authentication — API key (`X-API-Key` header, dev mode bypass)
+- [x] **7.3** Request tracing — `X-Request-ID` header, API log file
+- [x] **7.4** Swagger docs — `/docs` (auto-generated)
+- [x] **7.5** Tests (10 tests)
+- [ ] **7.6** LangSmith monitoring — ไม่ใช้ (DeepSeek ไม่ผ่าน LangChain SDK)
+- [ ] **7.7** Dockerize — Dockerfile + docker-compose (Phase 7.5)
+- [ ] **7.8** Deploy — ขึ้น server จริง (VPS / Cloud) (Phase 7.5)
 
 ---
 
