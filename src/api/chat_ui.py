@@ -142,7 +142,13 @@ async function send(){
     const d=await r.json();typingEl.remove();
     if(d.status!=='success'){addMsg('Sorry, system error','other');toggleSend(false);inp.focus();return}
     ctx=d.conversation_context||'';
-    if(d.sales_confirmed){addResult(d)}else{const reply=ctx.replace(/\[NB:\w+\]\n?/g,'').split('\nAetox: ').pop()||'';if(reply)addMsg(reply,'other')}
+    const reply=latestAetoxReply(ctx);
+    if(d.sales_confirmed){
+      if(reply)addMsg(reply,'other');
+      addResult(d)
+    }else{
+      if(reply)addMsg(reply,'other')
+    }
   }catch(e){typingEl.remove();addMsg('Connection error','other')}
   toggleSend(false);inp.focus()
 }
@@ -163,6 +169,7 @@ function addResult(d){
 }
 
 function toggleSend(v){btn.disabled=v;inp.disabled=v}
+function latestAetoxReply(c){return(c||'').replace(/\[NB:\w+\]\n?/g,'').split('\nAetox: ').pop().trim()}
 function esc(s){return(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 inp.addEventListener('input',()=>{inp.style.height='40px';inp.style.height=Math.min(inp.scrollHeight,100)+'px'})
 </script>

@@ -146,6 +146,15 @@ def list_notebooks() -> list[dict[str, Any]]:
     return notebooks
 
 
+def delete_notebook(nb_id: str) -> bool:
+    """Delete a notebook file"""
+    path = _notebook_path(nb_id)
+    if path.exists():
+        path.unlink()
+        return True
+    return False
+
+
 # ── Internal helpers ──────────────────────────────────────
 
 def _update_timestamp(text: str, now: str) -> str:

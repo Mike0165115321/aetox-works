@@ -210,6 +210,16 @@ def test_docs_available():
     assert resp.status_code == 200
 
 
+def test_chat_ui_shows_closing_reply_on_sales_confirmed():
+    """Chat UI displays the final Aetox reply before the result card"""
+    resp = client.get("/")
+    assert resp.status_code == 200
+    html = resp.text
+    assert "function latestAetoxReply" in html
+    assert "if(d.sales_confirmed)" in html
+    assert "if(reply)addMsg(reply,'other');" in html
+
+
 def test_openapi_schema():
     """GET /openapi.json → 200 + valid JSON"""
     resp = client.get("/openapi.json")

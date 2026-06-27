@@ -117,11 +117,17 @@ tr:hover td{background:#fafbfd}
 .nb-item{
   display:flex;align-items:center;justify-content:space-between;padding:12px 16px;
   background:var(--surface);border:1px solid var(--border);border-radius:8px;
-  cursor:pointer;transition:border-color 0.2s;
+  transition:border-color 0.2s;
 }
 .nb-item:hover{border-color:var(--accent2)}
+.nb-left{cursor:pointer;flex:1}
 .nb-title{font-weight:600;font-size:0.85em}
 .nb-meta{font-size:0.72em;color:var(--muted)}
+.nb-del{
+  background:none;border:1px solid var(--border);color:var(--muted);padding:4px 10px;
+  border-radius:6px;font-size:0.72em;cursor:pointer;transition:all 0.2s
+}
+.nb-del:hover{color:#ef4444;border-color:#ef4444}
 .nb-status{font-size:0.68em;font-weight:700;padding:2px 8px;border-radius:10px}
 .nb-status.active{background:#fef9e7;color:var(--amber)}
 .nb-status.confirmed{background:#ecfdf5;color:var(--green)}
@@ -293,11 +299,15 @@ function renderProjects(){
 function renderNotebooks(){
   if(!S.notebooks.length){document.getElementById('notebooksBody').innerHTML='<div class="empty"><div class="icon">📓</div><p>No notebooks yet</p></div>';return}
   document.getElementById('notebooksBody').innerHTML=`<div class="nb-list">${
-    S.notebooks.map(n=>`<div class="nb-item" onclick="viewNotebook('${n.id}')"><div><div class="nb-title">📓 ${esc(n.title)}</div><div class="nb-meta">ID: ${n.id}</div></div><span class="nb-status ${n.status==='confirmed'?'confirmed':'active'}">${n.status==='confirmed'?'Confirmed':'Active'}</span></div>`).join('')
+    S.notebooks.map(n=>`<div class="nb-item"><div class="nb-left" onclick="viewNotebook('${n.id}')"><div class="nb-title">📓 ${esc(n.title)}</div><div class="nb-meta">ID: ${n.id}</div></div><div style="display:flex;align-items:center;gap:8px"><span class="nb-status ${n.status==='confirmed'?'confirmed':'active'}">${n.status==='confirmed'?'Confirmed':'Active'}</span><button class="nb-del" onclick="event.stopPropagation();delNotebook('${n.id}')">Delete</button></div></div>`).join('')
   }</div>`;
 }
 
-async function viewNotebook(id){
+async function delNotebook(id){
+  if(!confirm('Delete notebook '+id+'?'))return;
+  await fetch('/api/notebooks/'+id,{method:'DELETE'});
+  refresh();
+}
   document.getElementById('notebooksBody').innerHTML='<div style="text-align:center;padding:20px;color:var(--muted)">Loading...</div>';
   const r=await (await fetch('/api/notebooks/'+id)).json();
   if(!r.success){renderNotebooks();return}

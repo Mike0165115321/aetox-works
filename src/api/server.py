@@ -469,6 +469,17 @@ async def api_last_pipeline():
     return {"success": True, "data": _last_pipeline}
 
 
+@app.delete("/api/notebooks/{lead_id}")
+async def api_notebook_delete(lead_id: str):
+    """🗑️ Delete a notebook"""
+    try:
+        from src.tools.notebook import delete_notebook
+        ok = delete_notebook(lead_id)
+        return {"success": ok, "message": "Deleted" if ok else "Not found"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 # ═══════════════════════════════════════════════════════════
 # Entry Point
 # ═══════════════════════════════════════════════════════════

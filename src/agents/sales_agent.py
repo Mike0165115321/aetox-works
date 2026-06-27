@@ -387,7 +387,8 @@ def _handle_confirmation_v3(state: AgentState, notebook: dict, context: str, nb_
     confirm_msg = (
         f"ขอบคุณที่ไว้วางใจครับ!\n"
         f"ผมได้บันทึกข้อมูลลงสมุดเรียบร้อย (Lead #{lead_id})\n"
-        f"และส่งต่องานให้ทีมแล้วครับ..."
+        f"และส่งต่องานให้ทีมแล้วครับ\n"
+        f"ขอบคุณที่คุยกับ Aetox ครับ หากมีรายละเอียดเพิ่มเติม แจ้งผมได้เสมอครับ"
     )
 
     return {

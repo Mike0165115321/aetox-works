@@ -156,6 +156,7 @@ def test_sales_confirmation(mock_llm, tmp_path, monkeypatch):
     result = sales_node(state)
     assert result["sales_confirmed"] is True
     assert "sales" in result["results"]
+    assert "ขอบคุณที่คุยกับ Aetox" in result["conversation_context"]
 
     # Verify lead in CRM
     from src.tools.crm import get_lead

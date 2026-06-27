@@ -47,13 +47,15 @@ def _extract_research_json(text: str) -> dict:
 
 
 def _build_search_query(sales_data: dict | None, user_input: str) -> str:
-    """สร้าง search query ที่ดีจากข้อมูล sales + user input"""
+    """สร้าง search query จาก handoff_brief หรือ sales data"""
     if not sales_data:
         return user_input
 
     parts = []
-    if sales_data.get("company"):
-        parts.append(sales_data["company"])
+    # handoff_brief uses project_name, raw sales uses company
+    company = sales_data.get("project_name") or sales_data.get("company") or ""
+    if company:
+        parts.append(company)
     if sales_data.get("needs"):
         parts.extend(sales_data["needs"][:2])
     if sales_data.get("pain_points"):
