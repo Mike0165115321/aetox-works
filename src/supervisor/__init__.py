@@ -18,11 +18,11 @@ class AgentState(TypedDict):
 
 
 # Agent types ที่ระบบรองรับ
+# เพิ่ม agent ใหม่ → แค่เติมใน AGENT_REGISTRY และสร้างไฟล์ใน src/agents/
 AGENT_REGISTRY = {
-    "sales":   "Sales Agent — ติดต่อลูกค้า สรุปความต้องการ",
+    "sales":   "Sales Agent — ตอบคำถามลูกค้าผ่านเว็บแชท ส่งอีเมล",
     "dev":     "Dev Agent — สร้างเว็บ landing page, API",
-    "video":   "Video Agent — ตัดต่อวิดีโอ, ใส่ TTS, คำบรรยาย",
-    "admin":   "Admin Agent — สรุปงาน, รายงาน, จัดการ schedule",
+    "data":    "Data Agent — วิเคราะห์ข้อมูล สร้างกราฟ รายงาน visuals",
 }
 
 # จะเพิ่ม agent ใหม่ → แค่เติมใน AGENT_REGISTRY และสร้างไฟล์ใน src/agents/

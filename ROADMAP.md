@@ -18,33 +18,31 @@
 
 ---
 
-## Phase 1: Core — LLM Integration & Router จริง
+## Phase 1: Core — LLM Integration ✅ (เสร็จ)
 
-> **เป้าหมาย:** ทำให้ Supervisor ใช้ LLM วิเคราะห์คำสั่งและเลือก agent ได้จริง
-
-- [ ] **1.1** สร้าง `.env` + `config.py` — ใส่ API key (OpenAI / อื่นๆ)
-- [ ] **1.2** สร้าง LLM client module — เรียก LLM ได้
-- [ ] **1.3** ทำให้ `router()` ใช้ LLM จริง — วิเคราะห์ intent แล้วเลือก agent
-- [ ] **1.4** เพิ่ม `src/config/agent_configs/` — เก็บ prompt แต่ละ agent
-- [ ] **1.5** เพิ่ม logging / tracing — รู้ว่า agent แต่ละตัวทำอะไร
-- [ ] **1.6** Tests — router, config, llm client
-
----
-
-## Phase 2: Agent ที่ 1 — Sales Agent (คุยลูกค้า)
-
-> **เป้าหมาย:** Agent ที่คุยกับลูกค้าผ่าน LINE/Email สรุปความต้องการ ส่งต่องาน
-
-- [ ] **2.1** Sales Agent prompt — personality + workflow
-- [ ] **2.2** เชื่อมต่อ LINE Messaging API
-- [ ] **2.3** เชื่อมต่อ Gmail (ผ่าน Gmail MCP)
-- [ ] **2.4** CRM module — บันทึกประวัติลูกค้า (SQLite → PostgreSQL)
-- [ ] **2.5** Summary generator — สรุปบทสนทนาเป็น structured data
-- [ ] **2.6** Tests
+| Task | Status |
+|:-----|:------:|
+| `.env` + `config.py` | ✅ |
+| LLM client module (DeepSeek) | ✅ |
+| LLM Router — classify intent เลือก agent | ✅ |
+| Logging | ✅ |
+| Tests (6 ผ่าน) | ✅ |
 
 ---
 
-## Phase 3: Agent ที่ 2 — Dev Agent (ทำเว็บ)
+## Phase 2: Sales Agent (MVP) — Web Chat + Email
+
+> **เป้าหมาย:** AI ตอบคำถามลูกค้าผ่านหน้าเว็บ สรุปความต้องการ ส่งอีเมล
+
+- [ ] **2.1** Web chat UI (HTML/CSS/JS ติด直接在หน้าเว็บ)
+- [ ] **2.2** Sales Agent prompt — personality + workflow
+- [ ] **2.3** เชื่อมต่อ Gmail — ส่งอีเมลสรุปให้ลูกค้า (ใช้ Gmail MCP)
+- [ ] **2.4** CRM พื้นฐาน — บันทึกประวัติลูกค้า (SQLite)
+- [ ] **2.5** Tests
+
+---
+
+## Phase 3: Dev Agent (ทำเว็บ)
 
 > **เป้าหมาย:** Agent ที่รับ requirement → สร้าง landing page → deploy
 
@@ -57,28 +55,16 @@
 
 ---
 
-## Phase 4: Agent ที่ 3 — Video Agent (ตัดต่อวิดีโอ)
+## Phase 4: Data Agent (วิเคราะห์ข้อมูล)
 
-> **เป้าหมาย:** Agent ที่รับสคริปต์ → สร้างวิดีโอด้วย HyperFrames → TTS → Captions
+> **เป้าหมาย:** Agent ที่รับข้อมูล สร้างกราฟ รายงาน visuals
 
-- [ ] **4.1** Video Agent prompt
-- [ ] **4.2** Integrate HyperFrames — สร้าง composition จาก prompt
-- [ ] **4.3** TTS integration (Kokoro / ElevenLabs)
-- [ ] **4.4** Caption/subtitle generator
-- [ ] **4.5** Render pipeline — วิดีโอสำเร็จรูป
+- [ ] **4.1** Data Agent prompt
+- [ ] **4.2** รองรับ data formats (CSV, JSON, Excel)
+- [ ] **4.3** สร้างกราฟ (matplotlib / plotly)
+- [ ] **4.4** Report generator — สรุปเป็น HTML/Markdown
+- [ ] **4.5** Dashboard พื้นฐาน
 - [ ] **4.6** Tests
-
----
-
-## Phase 5: Agent ที่ 4 — Admin Agent (สรุปงาน)
-
-> **เป้าหมาย:** Agent ที่สรุปงาน ทำรายงาน จัดการ schedule
-
-- [ ] **5.1** Admin Agent prompt
-- [ ] **5.2** Report generator — สรุปงานประจำวัน/สัปดาห์
-- [ ] **5.3** Schedule manager — จัดลำดับความสำคัญ
-- [ ] **5.4** Dashboard API — ดูสถานะงานทั้งหมด
-- [ ] **5.5** Tests
 
 ---
 
