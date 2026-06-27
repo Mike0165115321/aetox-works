@@ -342,10 +342,15 @@ async function send(){
         // Sales confirmed → full pipeline result
         isConversationMode = false;
         addResult(d);
-      } else if(d.agents_used.length===1 && d.agents_used[0]==='sales'){
-        // Only Sales ran → conversation mode
+      } else if(!d.sales_confirmed && d.conversation_context){
+        // Sales in conversation mode → show reply as chat message
         isConversationMode = true;
-        addMsg(d.output||'สวัสดีครับ มีอะไรให้ช่วยไหมครับ?','bot');
+        const lastReply = d.conversation_context.split('\nAetox: ').pop() || d.output || 'สวัสดีครับ';
+        addMsg(lastReply, 'bot');
+      } else if(d.agents_used.length===1 && d.agents_used[0]==='sales'){
+        // Fallback: only Sales ran
+        isConversationMode = true;
+        addMsg(d.output||'สวัสดีครับ','bot');
       } else {
         // Full pipeline without sales step
         addResult(d);
