@@ -265,14 +265,19 @@ def sales_node(state: AgentState) -> dict:
             "business": notebook["business"],
         }, ensure_ascii=False)
 
+        # Clean context for LLM (remove internal markers)
+        clean_context = re.sub(r"\[NB:\w+\]\n?", "", full_context)
+
         reply = call_llm(
-            f"## บทสนทนา\n{full_context}\n\n"
-            f"## สมุดโน๊ต (ข้อมูลที่เก็บได้แล้ว)\n{nb_summary}\n\n"
-            f"## ข้อมูลที่ยังขาด\n{_missing_notebook_fields(notebook)}\n\n"
-            f"## คำสั่ง\n"
-            f"คุณคือนักขายมืออาชีพของ Aetox Works คุยกับลูกค้าด้วยน้ำเสียงเป็นกันเอง "
-            f"ถามทีละคำถาม อย่ายัดทุกคำถามในรอบเดียว "
-            f"ถ้าข้อมูลธุรกิจครบ → สรุปทั้งหมด ถามลูกค้าว่ายืนยันดำเนินการต่อไหม",
+            f"## บทสนทนาที่ผ่านมา\n{clean_context}\n\n"
+            f"## ข้อมูลที่เก็บได้แล้ว\n{nb_summary}\n\n"
+            f"## สิ่งที่ต้องถามต่อ\n{_missing_notebook_fields(notebook)}\n\n"
+            f"## คำสั่งสำคัญ\n"
+            f"1. อ่านบทสนทนาข้างบนให้เข้าใจ — ลูกค้าพูดอะไรมาบ้าง?\n"
+            f"2. ถ้าลูกค้าให้ข้อมูลใหม่ → รับทราบสั้นๆ (1 ประโยค) → ถามคำถามต่อไปทันที\n"
+            f"3. ห้ามทักทายซ้ำ ห้ามแนะนำตัวซ้ำ — บทสนทนาดำเนินมาหลายเทิร์นแล้ว\n"
+            f"4. ถามทีละ 1 คำถามเท่านั้น\n"
+            f"5. ถ้าข้อมูลครบ → สรุปสิ่งที่เข้าใจ + ขอคำยืนยัน",
             system_prompt=system_prompt,
         )
         log.info("Sales reply: %s", reply[:100])
