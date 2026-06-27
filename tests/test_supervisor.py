@@ -85,13 +85,25 @@ def test_pipeline_next_starts_at_sales():
 
 
 def test_pipeline_sales_to_research():
-    """Sales done → next is research"""
+    """Sales done AND confirmed → next is research"""
     state = {
         "input": "test", "plan": "", "current_agent": "",
         "messages": [], "results": {"sales": "done"},
         "final_output": "", "error": None,
+        "sales_confirmed": True, "conversation_context": "",
     }
     assert pipeline_next_agent(state) == "research"
+
+
+def test_pipeline_sales_not_confirmed():
+    """Sales done but NOT confirmed → stops at final"""
+    state = {
+        "input": "test", "plan": "", "current_agent": "",
+        "messages": [], "results": {"sales": "done"},
+        "final_output": "", "error": None,
+        "sales_confirmed": False, "conversation_context": "",
+    }
+    assert pipeline_next_agent(state) == "final"
 
 
 def test_pipeline_data_to_final():
@@ -102,6 +114,7 @@ def test_pipeline_data_to_final():
             "sales": "done", "research": "done", "content": "done",
             "dev": "done", "data": "done",
         }, "final_output": "", "error": None,
+        "sales_confirmed": True, "conversation_context": "",
     }
     assert pipeline_next_agent(state) == "final"
 
@@ -112,6 +125,7 @@ def test_pipeline_partial_next():
         "input": "test", "plan": "", "current_agent": "",
         "messages": [], "results": {"sales": "done", "research": "done"},
         "final_output": "", "error": None,
+        "sales_confirmed": True, "conversation_context": "",
     }
     assert pipeline_next_agent(state) == "content"
 
@@ -199,7 +213,11 @@ def test_pipeline_full_run(
     result = graph.invoke({
         "input": "สร้าง AI solution สำหรับธุรกิจ",
         "plan": "", "current_agent": "",
-        "messages": [], "results": {}, "final_output": "", "error": None,
+        "messages": [], "results": {
+            "sales": json.dumps({"agent": "sales", "status": "confirmed", "lead_id": 1})
+        }, "final_output": "", "error": None,
+        "sales_confirmed": True,
+        "conversation_context": "",
     })
 
     assert result["final_output"] != ""

@@ -66,9 +66,12 @@ Agent ที่มี:
 
 def supervisor_node(state: AgentState) -> AgentState:
     """Supervisor: รับคำสั่ง วางแผน ส่งต่อ"""
+    # Keep conversation_context if passed from chat
+    ctx = state.get("conversation_context", "")
     return {
         "plan": f"Supervisor: รับคำสั่ง '{state['input']}'",
         "messages": [("system", f"Supervisor: รับคำสั่ง '{state['input']}'")],
+        "conversation_context": ctx,
     }
 
 
@@ -93,9 +96,17 @@ def pipeline_next_agent(state: AgentState) -> str:
     """
     Pipeline router: วิ่งตามลำดับ sales → research → content → dev → data → final
 
-    ดูว่า agent ตัวสุดท้ายที่ทำงานคืออะไร → หาตัวถัดไปใน pipeline
+    ⚠️ CRITICAL: Sales Agent ต้อง confirmed ก่อนถึงจะไปต่อได้
+    ถ้า sales_confirmed = False → หยุดที่ sales (รอลูกค้าคุยต่อ)
     """
     results = state.get("results", {})
+    sales_done = "sales" in results
+    sales_confirmed = state.get("sales_confirmed", False)
+
+    # ถ้า sales ทำงานแล้วแต่ยังไม่ confirmed → หยุด ไม่ไปต่อ
+    if sales_done and not sales_confirmed:
+        log.info("Pipeline: sales done but NOT confirmed → final (waiting for customer)")
+        return "final"
 
     # หา agent สุดท้ายที่ทำเสร็จแล้ว
     for agent_name in reversed(PIPELINE_ORDER):
@@ -106,7 +117,6 @@ def pipeline_next_agent(state: AgentState) -> str:
                 log.info("Pipeline: %s → %s", agent_name, next_agent)
                 return next_agent
             else:
-                # ครบทุก agent → final
                 log.info("Pipeline: complete → final")
                 return "final"
             break

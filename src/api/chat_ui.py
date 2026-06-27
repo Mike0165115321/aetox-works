@@ -303,6 +303,10 @@ const ca = document.getElementById('chatArea');
 const inp = document.getElementById('userInput');
 const btn = document.getElementById('sendBtn');
 
+// Multi-turn conversation state
+let conversationCtx = '';
+let isConversationMode = false;
+
 function quickSend(el){inp.value=el.textContent;send()}
 
 async function send(){
@@ -311,18 +315,58 @@ async function send(){
   document.getElementById('welcome')?.remove();
   addMsg(t,'user'); toggleSend(true);
 
-  const card = addLoading();
-  for(let i=0;i<A.length;i++){await sleep(400);stepLoading(card,i)}
+  // If in conversation mode, show typing indicator
+  if(isConversationMode){
+    const typingCard = addTyping('Sales Agent is thinking...');
+    await sleep(600);
+    typingCard.remove();
+  } else {
+    // First message — show pipeline loading
+    const card = addLoading();
+    for(let i=0;i<A.length;i++){await sleep(400);stepLoading(card,i)}
+    card.remove();
+  }
+
   try{
     const r = await fetch('/pipeline/run',{
       method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({input:t,mode:'pipeline'})
+      body:JSON.stringify({input:t,mode:'pipeline',conversation_context:conversationCtx})
     });
     const d = await r.json();
-    card.remove();
-    d.status==='success' ? addResult(d) : addMsg('Error: '+(d.detail||'Unknown'),'bot');
-  }catch(e){card.remove();addMsg('Connection error: '+e.message,'bot')}
+
+    if(d.status==='success'){
+      // Update conversation context
+      conversationCtx = d.conversation_context||'';
+
+      if(d.sales_confirmed){
+        // Sales confirmed → full pipeline result
+        isConversationMode = false;
+        addResult(d);
+      } else if(d.agents_used.length===1 && d.agents_used[0]==='sales'){
+        // Only Sales ran → conversation mode
+        isConversationMode = true;
+        addMsg(d.output||'สวัสดีครับ มีอะไรให้ช่วยไหมครับ?','bot');
+      } else {
+        // Full pipeline without sales step
+        addResult(d);
+      }
+    } else {
+      addMsg('Error: '+(d.detail||'Unknown'),'bot');
+    }
+  }catch(e){
+    isConversationMode = false;
+    addMsg('Connection error: '+e.message,'bot');
+  }
   toggleSend(false); inp.focus();
+}
+
+function addTyping(text){
+  const d=document.createElement('div');d.innerHTML=`
+    <div class="pl-loading" style="text-align:center;padding:16px">
+      <div class="pl-title"><span>${esc(text)}</span></div>
+    </div>`;
+  ca.appendChild(d.firstElementChild);ca.scrollTop=ca.scrollHeight;
+  return ca.lastElementChild;
 }
 
 function addMsg(text,role){

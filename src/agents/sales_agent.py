@@ -1,11 +1,13 @@
 """
-Aetox Works — Sales Agent 🗣️
-Pipeline step 1: เก็บโจทย์ลูกค้า, pain point, สรุป需求 → ส่ง Research
+Aetox Works — Sales Agent 🗣️ (v2 — Multi-turn Sales Conversation)
 
-Tools:
-  - CRM (SQLite) — save_lead, list_leads, update_lead_status
-  - LLM Summary Generator — extract structured data
-  - Web Chat — run_chat_server()
+บทบาท: นักขาย / นักการตลาด
+หน้าที่:
+  1. คุยกับลูกค้า ถามทีละคำถาม เก็บข้อมูลให้ครบ
+  2. เมื่อข้อมูลครบ → สรุปความเข้าใจ → ขอคำยืนยันจากลูกค้า
+  3. ลูกค้ายืนยัน → บันทึก lead → ตั้ง sales_confirmed = True → ส่งต่อ Research
+
+ห้าม: สร้าง content, เขียนเว็บ, วิเคราะห์ตลาด — นั่นไม่ใช่งาน Sales
 """
 import logging
 import json
@@ -14,11 +16,13 @@ import re
 from src.supervisor import AgentState
 from src.config.agent_configs import get_system_prompt, get_output_format
 from src.llm.client import call_llm
-from src.tools.crm import init_db, save_lead, list_leads, update_lead_status
+from src.tools.crm import init_db, save_lead
 
 log = logging.getLogger("aetox.agents.sales")
 
-# โครงสร้าง JSON ที่ Sales Agent ต้อง extract
+# ข้อมูลที่ Sales ต้องเก็บให้ครบก่อนขอ confirmation
+REQUIRED_FIELDS = ["customer_name", "company", "needs", "goals"]
+
 SALES_JSON_SCHEMA = {
     "customer_name": "",
     "company": "",
@@ -31,8 +35,6 @@ SALES_JSON_SCHEMA = {
 
 
 def _extract_json(text: str) -> dict:
-    """พยายาม extract JSON object จากข้อความ LLM response"""
-    # ลองหาทั้ง block ที่อยู่ใน ```json ... ``` หรือ { ... } โดยตรง
     patterns = [
         r"```(?:json)?\s*(\{.*?\})\s*```",
         r"(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})",
@@ -47,127 +49,182 @@ def _extract_json(text: str) -> dict:
     return {}
 
 
-def _merge_with_schema(raw: dict) -> dict:
-    """เติม default จาก schema และ map field names (รองรับทั้งไทย/อังกฤษ)"""
-    result = dict(SALES_JSON_SCHEMA)
+def _parse_conversation(context: str) -> dict:
+    """Parse conversation history → extract what's been collected so far"""
+    data = dict(SALES_JSON_SCHEMA)
 
-    # map field names (รองรับหลายรูปแบบ)
-    field_map = {
-        "customer_name": ["customer_name", "name", "ชื่อ", "ชื่อลูกค้า", "customer"],
-        "company": ["company", "บริษัท", "company_name", "องค์กร", "business"],
-        "pain_points": ["pain_points", "pain point", "ปัญหา", "pain", "painpoint"],
-        "needs": ["needs", "ความต้องการ", "need", "ต้องการ", "requirements"],
-        "goals": ["goals", "เป้าหมาย", "goal", "วัตถุประสงค์", "objective"],
-        "timeline": ["timeline", "เวลา", "กำหนด", "deadline", "schedule", "ภายใน"],
-        "summary_thai": ["summary_thai", "summary", "สรุป", "สรุปภาษาไทย", "brief"],
-    }
+    if not context:
+        return data
 
-    list_fields = {"pain_points", "needs", "goals"}
-
-    for target_key, aliases in field_map.items():
-        for alias in aliases:
-            if alias in raw and raw[alias] is not None:
-                val = raw[alias]
-                if isinstance(val, list):
-                    result[target_key] = [str(v) for v in val]
-                elif target_key in list_fields:
-                    # fields ที่ควรเป็น list → wrap string
-                    result[target_key] = [str(val)]
-                elif isinstance(val, str):
-                    result[target_key] = val
-                else:
-                    result[target_key] = str(val)
-                break
-
-    return result
-
-
-def _parse_lead_from_reply(reply: str) -> dict:
-    """
-    วิเคราะห์ LLM response → extract structured lead data
-
-    Returns:
-        dict with customer_name, company, pain_points, needs, goals, timeline, summary_thai
-    """
-    parsed = _extract_json(reply)
+    # Try extracting from last summary JSON in context
+    parsed = _extract_json(context)
     if parsed:
-        structured = _merge_with_schema(parsed)
-        log.info("Sales extracted structured data: %s", list(structured.keys()))
-        return structured
+        # Map field names (รองรับทั้งไทย/อังกฤษ)
+        field_map = {
+            "customer_name": ["customer_name", "name", "ชื่อ", "ชื่อลูกค้า", "customer"],
+            "company": ["company", "บริษัท", "company_name", "องค์กร"],
+            "pain_points": ["pain_points", "pain point", "ปัญหา", "pain"],
+            "needs": ["needs", "ความต้องการ", "need", "ต้องการ"],
+            "goals": ["goals", "เป้าหมาย", "goal", "วัตถุประสงค์"],
+            "timeline": ["timeline", "เวลา", "กำหนด", "deadline", "ภายใน"],
+            "summary_thai": ["summary_thai", "summary", "สรุป"],
+        }
+        for target_key, aliases in field_map.items():
+            for alias in aliases:
+                if alias in parsed and parsed[alias]:
+                    val = parsed[alias]
+                    if isinstance(val, list):
+                        data[target_key] = val
+                    elif isinstance(val, str) and val.strip():
+                        data[target_key] = val
+                    break
 
-    # fallback: ไม่เจอ JSON → ใช้ทั้ง reply เป็น summary
-    return {
-        **SALES_JSON_SCHEMA,
-        "summary_thai": reply[:500],
-    }
+    return data
+
+
+def _is_info_complete(data: dict) -> bool:
+    """ตรวจสอบว่าข้อมูลครบพอที่จะขอ confirmation หรือยัง"""
+    # ต้องมีอย่างน้อย: ชื่อ/บริษัท (หรืออย่างใดอย่างหนึ่ง) + needs + goals
+    has_identity = bool(data.get("customer_name") or data.get("company"))
+    has_needs = bool(data.get("needs"))
+    has_goals = bool(data.get("goals"))
+    return has_identity and has_needs and has_goals
 
 
 def sales_node(state: AgentState) -> dict:
     """
-    Sales Agent node สำหรับ LangGraph
+    Sales Agent — Multi-turn sales conversation
 
-    Pipeline step 1: รับ input จาก user/supervisor → วิเคราะห์ความต้องการ → extract structured data → บันทึก CRM → ส่งต่อ Research
-
-    Flow:
-      1. เรียก LLM ด้วย system prompt + output format
-      2. Parse JSON จาก response (extract structured fields)
-      3. บันทึก lead ลง CRM แบบมีโครงสร้าง
-      4. ส่งคืน structured result ให้ pipeline
+    1. ถ้ายังไม่มี conversation → ทักทาย ถามคำถามแรก
+    2. มี conversation แล้ว → วิเคราะห์ว่าข้อมูลครบหรือยัง
+       - ยังไม่ครบ → ถามคำถามต่อไป (ทีละข้อ)
+       - ครบแล้ว → สรุป + ขอ confirmation
+    3. ลูกค้าตอบ "yes/ตกลง/ยืนยัน/เริ่มเลย" → บันทึก lead → sales_confirmed = True
     """
-    user_input = state.get("input", "")
-    system_prompt = get_system_prompt("sales") or "คุณคือ Sales Agent"
+    user_input = state.get("input", "").strip()
+    conversation = state.get("conversation_context", "")
+    system_prompt = get_system_prompt("sales") or _default_sales_prompt()
     output_format = get_output_format("sales") or ""
 
-    messages_history = state.get("messages", [])
+    # Append current message to conversation
+    if conversation:
+        full_context = f"{conversation}\nลูกค้า: {user_input}"
+    else:
+        full_context = f"ลูกค้า: {user_input}"
 
-    # เรียก LLM สำหรับวิเคราะห์
+    # Parse what we've collected so far
+    collected = _parse_conversation(full_context)
+
+    # ── Detect confirmation ──
+    confirm_keywords = ["ตกลง", "ยืนยัน", "yes", "ok", "เริ่มเลย", "ทำเลย", "ดำเนินการ",
+                        "โอเค", "okay", "จัดเลย", "ลุย", "ได้เลย", "เห็นด้วย", "agree",
+                        "confirm", "proceed", "go ahead", "เริ่มต้น", "พร้อม"]
+    lower_input = user_input.lower()
+    is_confirm = any(kw in lower_input for kw in confirm_keywords)
+
+    info_complete = _is_info_complete(collected)
+
+    # If customer confirms AND info is complete → handoff
+    if is_confirm and info_complete:
+        return _handle_confirmation(state, collected, full_context)
+
+    # ── Call LLM for next response ──
     try:
-        format_instruction = (
-            f"\n\n⚠️ เมื่อคุณมีข้อมูลครบแล้ว ให้ตอบกลับเป็น JSON format นี้เท่านั้น:\n{output_format}"
-            if output_format else ""
-        )
+        format_instruction = ""
+        if info_complete and output_format:
+            format_instruction = (
+                f"\n\n⚠️ ข้อมูลครบแล้ว! สรุปสิ่งที่เข้าใจ และถามลูกค้าว่า "
+                f"'ยืนยันให้ดำเนินการต่อหรือไม่?' "
+                f"ถ้าลูกค้าตอบตกลง ให้ตอบกลับเป็น JSON:\n{output_format}"
+            )
+
         reply = call_llm(
-            f"ลูกค้าพูดว่า: {user_input}\n\n"
-            f"บทสนทนาก่อนหน้า: {json.dumps(messages_history[-6:] if messages_history else [], ensure_ascii=False)}\n\n"
-            f"ถามคำถามเพิ่มเติมถ้าข้อมูลยังไม่ครบ "
-            f"ถ้าข้อมูลครบแล้วให้สรุปเป็น JSON{format_instruction}",
+            f"## บทสนทนาจนถึงตอนนี้\n{full_context}\n\n"
+            f"## ข้อมูลที่เก็บได้แล้ว\n{json.dumps(collected, ensure_ascii=False)}\n\n"
+            f"## สิ่งที่ต้องถามต่อ (ข้อมูลที่ยังขาด)\n"
+            f"{_missing_fields(collected)}\n\n"
+            f"## คำสั่ง\n"
+            f"คุณคือนักขายมืออาชีพของ Aetox Works คุยกับลูกค้าด้วยน้ำเสียงเป็นกันเอง อบอุ่น "
+            f"ถามทีละคำถามเพื่อเก็บข้อมูล อย่ายัดทุกคำถามในรอบเดียว "
+            f"ถ้าข้อมูลครบ → สรุปความเข้าใจทั้งหมด และถามลูกค้าว่าต้องการให้ดำเนินการต่อหรือไม่"
+            f"{format_instruction}",
             system_prompt=system_prompt,
         )
-        log.info("Sales LLM reply: %s", reply[:120])
+        log.info("Sales reply: %s", reply[:100])
     except Exception as e:
         log.warning("Sales LLM error: %s", e)
-        reply = f"[Sales Agent] วิเคราะห์: {user_input[:100]}..."
+        reply = "ขออภัยครับ ระบบมีปัญหาชั่วคราว กรุณาลองใหม่อีกครั้ง"
 
-    # Extract structured data
-    lead_data = _parse_lead_from_reply(reply)
+    return {
+        "results": {},
+        "conversation_context": f"{full_context}\nAetox: {reply}",
+        "messages": [("system", f"Sales: {reply[:150]}")],
+        "sales_confirmed": False,
+    }
 
-    # บันทึก lead ลง CRM
+
+def _missing_fields(data: dict) -> str:
+    """Return list of missing fields as Thai instructions"""
+    missing = []
+    if not data.get("customer_name") and not data.get("company"):
+        missing.append("- ยังไม่รู้ชื่อลูกค้าหรือชื่อบริษัท → ถาม")
+    if not data.get("pain_points"):
+        missing.append("- ยังไม่รู้ปัญหาที่ลูกค้าเจอ → ถาม")
+    if not data.get("needs"):
+        missing.append("- ยังไม่รู้ว่าลูกค้าต้องการให้ช่วยอะไร → ถาม")
+    if not data.get("goals"):
+        missing.append("- ยังไม่รู้เป้าหมายที่ลูกค้าอยากได้ → ถาม")
+    if not data.get("timeline"):
+        missing.append("- ยังไม่รู้กรอบเวลา → ถาม (แต่ไม่ต้องบังคับ)")
+    if not missing:
+        return "✅ ข้อมูลครบแล้ว! สรุปและขอคำยืนยัน"
+    return "\n".join(missing)
+
+
+def _handle_confirmation(state: AgentState, collected: dict, context: str) -> dict:
+    """Customer confirmed → save lead, set sales_confirmed = True"""
     lead_id = None
     try:
         init_db()
         lead_id = save_lead(
-            name=lead_data.get("customer_name", ""),
-            company=lead_data.get("company", ""),
-            pain_points=lead_data.get("pain_points", []),
-            needs=lead_data.get("needs", []),
-            goals=lead_data.get("goals", []),
-            timeline=lead_data.get("timeline", ""),
-            summary=lead_data.get("summary_thai", reply[:500]),
-            source="workflow",
+            name=collected.get("customer_name", ""),
+            company=collected.get("company", ""),
+            pain_points=collected.get("pain_points", []),
+            needs=collected.get("needs", []),
+            goals=collected.get("goals", []),
+            timeline=collected.get("timeline", ""),
+            summary=collected.get("summary_thai", ""),
+            source="chat",
         )
-        log.info("Sales saved lead #%d: %s / %s", lead_id, lead_data.get("customer_name"), lead_data.get("company"))
+        log.info("Sales CONFIRMED → lead #%d saved", lead_id)
     except Exception as e:
-        log.warning("Sales CRM error: %s", e)
+        log.warning("Sales CRM error on confirm: %s", e)
 
-    # Output for pipeline
     output = json.dumps({
         "agent": "sales",
         "lead_id": lead_id,
-        "lead_data": lead_data,
-        "status": "complete",
+        "lead_data": collected,
+        "status": "confirmed",
     }, ensure_ascii=False)
+
+    confirm_msg = (
+        f"ขอบคุณที่ไว้วางใจครับ! 🎉\n"
+        f"ผมได้บันทึกข้อมูลของคุณเรียบร้อยแล้ว (Lead #{lead_id})\n"
+        f"กำลังส่งต่องานให้ทีม Research วิเคราะห์ตลาดให้คุณต่อครับ..."
+    )
 
     return {
         "results": {"sales": output},
-        "messages": [("system", f"Sales: saved lead #{lead_id} — {lead_data.get('summary_thai', '')[:150]}")],
+        "conversation_context": f"{context}\nAetox: {confirm_msg}",
+        "messages": [("system", f"Sales CONFIRMED: lead #{lead_id}")],
+        "sales_confirmed": True,
     }
+
+
+def _default_sales_prompt() -> str:
+    return (
+        "คุณคือ Sales Agent มืออาชีพของ Aetox Works\n"
+        "บุคลิก: เป็นกันเอง อบอุ่น ฟังเยอะ ถามทีละคำถาม ไม่ยัดเยียด\n"
+        "หน้าที่: เก็บข้อมูลลูกค้าให้ครบ → สรุป → ขอคำยืนยัน → ส่งต่องาน\n"
+        "ห้าม: สร้าง content, เขียนเว็บ, วิเคราะห์ตลาด — คุณเป็นแค่นักขาย"
+    )

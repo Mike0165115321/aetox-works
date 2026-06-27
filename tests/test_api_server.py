@@ -38,7 +38,7 @@ def test_status_endpoint():
 # ── Pipeline Run ──────────────────────────────────────────
 
 
-@patch("src.agents.sales_agent.call_llm")
+@patch("src.supervisor.workflow.sales_node")
 @patch("src.agents.research_agent.web_search")
 @patch("src.agents.research_agent.semantic_search")
 @patch("src.agents.research_agent.call_llm")
@@ -52,7 +52,7 @@ def test_status_endpoint():
 def test_pipeline_run(
     mock_agg, mock_proj, mock_drafts, mock_leads,
     mock_data_llm, mock_dev_llm, mock_content_llm,
-    mock_research_llm, mock_exa, mock_firecrawl, mock_sales_llm,
+    mock_research_llm, mock_exa, mock_firecrawl, mock_sales_node,
     tmp_path, monkeypatch
 ):
     """POST /pipeline/run → 200 + agents_used + output"""
@@ -61,7 +61,14 @@ def test_pipeline_run(
     monkeypatch.setattr("src.tools.reporter._DB_PATH", tmp_path / "metrics.db")
     monkeypatch.setattr("src.tools.builder._OUTPUT_DIR", tmp_path / "websites")
 
-    mock_sales_llm.return_value = json.dumps({"customer_name": "Test", "summary_thai": "test"})
+    # Sales node auto-confirms (bypass multi-turn conversation gate)
+    mock_sales_node.return_value = {
+        "results": {"sales": json.dumps({"agent": "sales", "lead_id": 1, "status": "confirmed"})},
+        "messages": [("system", "Sales confirmed")],
+        "sales_confirmed": True,
+        "conversation_context": "confirmed",
+    }
+
     mock_firecrawl.return_value = []
     mock_exa.return_value = []
     mock_research_llm.return_value = json.dumps({"summary_thai": "research done"})
@@ -73,6 +80,7 @@ def test_pipeline_run(
     mock_agg.return_value = {}
     mock_data_llm.return_value = json.dumps({"overall_status": "success", "summary_thai": "done!"})
 
+    # Pre-fill sales results to bypass sales confirmation gate
     resp = client.post("/pipeline/run", json={
         "input": "สร้าง landing page AI",
         "mode": "pipeline",

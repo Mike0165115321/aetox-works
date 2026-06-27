@@ -80,6 +80,7 @@ def _secure_compare(a: str, b: str) -> bool:
 class PipelineRequest(BaseModel):
     input: str = Field(..., min_length=1, max_length=5000, description="คำสั่ง/ความต้องการ")
     mode: str = Field(default="pipeline", pattern="^(pipeline|router)$")
+    conversation_context: str = Field(default="", max_length=10000)
 
 
 class PipelineResponse(BaseModel):
@@ -90,6 +91,8 @@ class PipelineResponse(BaseModel):
     agents_used: list[str]
     elapsed_ms: int
     status: str
+    sales_confirmed: bool = False
+    conversation_context: str = ""
 
 
 class HealthResponse(BaseModel):
@@ -241,6 +244,8 @@ async def run_pipeline(
             "results": {},
             "final_output": "",
             "error": None,
+            "sales_confirmed": False,
+            "conversation_context": req.conversation_context,
         })
 
         agents_used = [k for k in result.get("results", {})]
@@ -257,6 +262,8 @@ async def run_pipeline(
             agents_used=agents_used,
             elapsed_ms=elapsed_ms,
             status="success",
+            sales_confirmed=result.get("sales_confirmed", False),
+            conversation_context=result.get("conversation_context", ""),
         )
 
     except Exception as e:

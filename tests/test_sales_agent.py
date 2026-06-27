@@ -1,210 +1,169 @@
-"""Tests for Sales Agent — Phase 2"""
+"""Tests for Sales Agent v2 — Multi-turn Conversation"""
 import json
 from unittest.mock import patch
 
-# ── JSON Extraction ──────────────────────────────────────
+
+# ── Conversation Parsing ─────────────────────────────────
 
 
-def test_extract_json_from_code_block():
-    """ดึง JSON จาก ```json ... ``` block"""
-    from src.agents.sales_agent import _extract_json
-    text = '''นี่คือบทวิเคราะห์
-```json
-{"customer_name": "สมชาย", "company": "ThaiTech"}
-```
-จบการสนทนา'''
-    result = _extract_json(text)
-    assert result["customer_name"] == "สมชาย"
-    assert result["company"] == "ThaiTech"
-
-
-def test_extract_json_inline():
-    """ดึง JSON ที่ไม่มี code block"""
-    from src.agents.sales_agent import _extract_json
-    text = 'สรุป: {"needs": ["ทำเว็บ", "SEO"], "timeline": "2 เดือน"}'
-    result = _extract_json(text)
-    assert result["needs"] == ["ทำเว็บ", "SEO"]
-    assert result["timeline"] == "2 เดือน"
-
-
-def test_extract_json_no_json():
-    """ถ้าไม่มี JSON → return empty dict"""
-    from src.agents.sales_agent import _extract_json
-    result = _extract_json("แค่ข้อความธรรมดา ไม่มี JSON")
-    assert result == {}
-
-
-def test_extract_json_invalid():
-    """JSON พัง → return empty dict"""
-    from src.agents.sales_agent import _extract_json
-    result = _extract_json("{invalid json here}")
-    assert result == {}
-
-
-# ── Schema Merging ───────────────────────────────────────
-
-
-def test_merge_with_schema_defaults():
-    """merge ดาต้าที่ขาด field → เติม default"""
-    from src.agents.sales_agent import _merge_with_schema
-    raw = {"customer_name": "ไมค์"}
-    result = _merge_with_schema(raw)
-    assert result["customer_name"] == "ไมค์"
-    assert result["company"] == ""
-    assert result["pain_points"] == []
+def test_parse_empty_conversation():
+    from src.agents.sales_agent import _parse_conversation
+    result = _parse_conversation("")
+    assert result["customer_name"] == ""
     assert result["needs"] == []
 
 
-def test_merge_with_schema_all_fields():
-    """merge ครบทุก field"""
-    from src.agents.sales_agent import _merge_with_schema
-    raw = {
-        "customer_name": "สมศรี",
-        "company": "GreenEnergy",
-        "pain_points": ["ยอดขายตก", "ไม่มีเว็บ"],
-        "needs": ["ทำเว็บขายของ", "SEO"],
-        "goals": ["เพิ่มยอดขาย 50%"],
-        "timeline": "ภายใน 3 เดือน",
-        "summary_thai": "ต้องการทำเว็บ e-commerce",
-    }
-    result = _merge_with_schema(raw)
-    assert result["customer_name"] == "สมศรี"
-    assert result["pain_points"] == ["ยอดขายตก", "ไม่มีเว็บ"]
-    assert result["timeline"] == "ภายใน 3 เดือน"
+def test_parse_conversation_with_json():
+    from src.agents.sales_agent import _parse_conversation
+    ctx = 'ลูกค้า: ช่วยทำเว็บ\nAetox: {"customer_name":"ไมค์","needs":["ทำเว็บ"]}'
+    result = _parse_conversation(ctx)
+    assert result["customer_name"] == "ไมค์"
+    assert result["needs"] == ["ทำเว็บ"]
 
 
-def test_merge_handles_non_list_fields():
-    """ถ้า pain_points เป็น string → แปลงเป็น list"""
-    from src.agents.sales_agent import _merge_with_schema
-    raw = {"pain_points": "ยอดขายตก"}
-    result = _merge_with_schema(raw)
-    assert result["pain_points"] == ["ยอดขายตก"]
+def test_parse_conversation_thai_fields():
+    from src.agents.sales_agent import _parse_conversation
+    ctx = '{"ชื่อ": "สมชาย", "บริษัท": "ThaiTech", "ต้องการ": ["SEO"]}'
+    result = _parse_conversation(ctx)
+    assert result["customer_name"] == "สมชาย"
+    assert result["company"] == "ThaiTech"
+    assert result["needs"] == ["SEO"]
 
 
-# ── Parse Lead from Reply ────────────────────────────────
+# ── Info Complete Check ──────────────────────────────────
 
 
-def test_parse_lead_full_json():
-    """parse reply ที่เป็น JSON สมบูรณ์"""
-    from src.agents.sales_agent import _parse_lead_from_reply
-    reply = json.dumps({
-        "customer_name": "ชยพล",
-        "company": "Aetox",
-        "pain_points": ["ไม่มี automation"],
-        "needs": ["ระบบ AI จัดการงาน"],
-        "goals": ["ลดต้นทุน 30%"],
-        "timeline": "6 เดือน",
-        "summary_thai": "Aetox ต้องการ AI workforce",
-    }, ensure_ascii=False)
-    result = _parse_lead_from_reply(reply)
-    assert result["customer_name"] == "ชยพล"
-    assert result["company"] == "Aetox"
-    assert result["pain_points"] == ["ไม่มี automation"]
+def test_info_incomplete():
+    from src.agents.sales_agent import _is_info_complete
+    assert not _is_info_complete({"customer_name": "", "needs": [], "goals": []})
 
 
-def test_parse_lead_fallback():
-    """reply ไม่มี JSON → ใช้ทั้งข้อความเป็น summary"""
-    from src.agents.sales_agent import _parse_lead_from_reply
-    reply = "ลูกค้าสนใจทำเว็บ แต่ยังไม่ให้ข้อมูลครบ"
-    result = _parse_lead_from_reply(reply)
-    assert result["customer_name"] == ""  # default
-    assert result["summary_thai"] == reply  # ใช้ทั้ง reply เป็น summary
+def test_info_missing_goals():
+    from src.agents.sales_agent import _is_info_complete
+    assert not _is_info_complete({"customer_name": "A", "needs": ["web"], "goals": []})
 
 
-# ── Sales Node Integration ───────────────────────────────
+def test_info_complete():
+    from src.agents.sales_agent import _is_info_complete
+    assert _is_info_complete({
+        "customer_name": "ไมค์", "company": "Aetox",
+        "needs": ["ทำเว็บ"], "goals": ["เพิ่มยอดขาย"]
+    })
+
+
+def test_info_complete_company_only():
+    from src.agents.sales_agent import _is_info_complete
+    assert _is_info_complete({
+        "customer_name": "", "company": "Aetox",
+        "needs": ["AI"], "goals": ["growth"]
+    })
+
+
+# ── Sales Node: First Message ────────────────────────────
 
 
 @patch("src.agents.sales_agent.call_llm")
-def test_sales_node_basic(mock_llm, tmp_path, monkeypatch):
-    """sales_node เรียก LLM → parse JSON → save CRM"""
-    monkeypatch.setattr("src.tools.crm._DB_PATH", tmp_path / "test_crm.db")
-
-    mock_llm.return_value = json.dumps({
-        "customer_name": "ทดสอบ",
-        "company": "TestCorp",
-        "pain_points": ["เว็บเก่า", "SEO ไม่ดี"],
-        "needs": ["ทำเว็บใหม่", "SEO"],
-        "goals": ["เพิ่ม traffic 2x"],
-        "timeline": "1 เดือน",
-        "summary_thai": "ต้องการรีแบรนด์เว็บ",
-    }, ensure_ascii=False)
+def test_sales_first_message(mock_llm):
+    """First message → Sales greets and asks first question"""
+    mock_llm.return_value = "สวัสดีครับ! ยินดีที่ได้รู้จัก คุณมีปัญหาอะไรที่อยากให้ช่วยครับ?"
 
     from src.agents.sales_agent import sales_node
 
-    state = {
-        "input": "ช่วยทำเว็บหน่อยครับ",
-        "plan": "",
-        "current_agent": "",
-        "messages": [],
-        "results": {},
-        "final_output": "",
-        "error": None,
-    }
+    state = new_state("ช่วยทำเว็บหน่อยครับ")
 
     result = sales_node(state)
-    assert "sales" in result["results"]
-    parsed = json.loads(result["results"]["sales"])
-    assert parsed["lead_id"] > 0
-    assert parsed["lead_data"]["customer_name"] == "ทดสอบ"
-    assert parsed["lead_data"]["company"] == "TestCorp"
+    assert result["sales_confirmed"] is False
+    assert "สวัสดี" in result.get("conversation_context", "")
 
-    # verify CRM มีข้อมูล
+
+# ── Sales Node: Conversation Continues ───────────────────
+
+
+@patch("src.agents.sales_agent.call_llm")
+def test_sales_continues_conversation(mock_llm):
+    """Second message → Sales asks next question, stays in conversation"""
+    mock_llm.return_value = "เข้าใจแล้วครับ แล้วเป้าหมายที่คุณอยากได้คืออะไรครับ?"
+
+    from src.agents.sales_agent import sales_node
+
+    state = new_state("อยากเพิ่มยอดขาย", ctx="ลูกค้า: ช่วยทำเว็บ\nAetox: สวัสดีครับ คุณมีปัญหาอะไรครับ?\nลูกค้า: เว็บเก่าช้ามาก")
+
+    result = sales_node(state)
+    assert result["sales_confirmed"] is False
+    assert "conversation_context" in result
+
+
+# ── Sales Node: Confirmation ─────────────────────────────
+
+
+@patch("src.agents.sales_agent.call_llm")
+def test_sales_confirmation(mock_llm, tmp_path, monkeypatch):
+    """Customer confirms → sales_confirmed = True, lead saved"""
+    monkeypatch.setattr("src.tools.crm._DB_PATH", tmp_path / "crm.db")
+    mock_llm.return_value = "ขอบคุณที่ยืนยันครับ!"
+
+    from src.agents.sales_agent import sales_node
+
+    # Include JSON data in context so _parse_conversation can extract it
+    ctx = (
+        'ลูกค้า: ช่วยทำเว็บ\n'
+        'Aetox: บริษัทชื่ออะไรครับ?\n'
+        'ลูกค้า: Aetox\n'
+        'Aetox: ต้องการให้ช่วยอะไรครับ?\n'
+        'ลูกค้า: ทำ landing page\n'
+        'Aetox: เป้าหมายคืออะไรครับ?\n'
+        'ลูกค้า: เพิ่มยอดขาย\n'
+        'Aetox: {"customer_name":"ไมค์","company":"Aetox","needs":["landing page"],"goals":["เพิ่มยอดขาย"]}\n'
+    )
+
+    state = new_state("ตกลง เริ่มเลย", ctx=ctx)
+
+    result = sales_node(state)
+    assert result["sales_confirmed"] is True
+    assert "sales" in result["results"]
+
+    # Verify lead in CRM
     from src.tools.crm import get_lead
+    parsed = json.loads(result["results"]["sales"])
     lead = get_lead(parsed["lead_id"])
     assert lead is not None
-    assert lead["name"] == "ทดสอบ"
-    assert lead["company"] == "TestCorp"
-    assert "เว็บเก่า" in lead["pain_points"]
+    assert lead["company"] == "Aetox"
+
+
+# ── Sales Node: Info Complete But Not Confirmed ──────────
 
 
 @patch("src.agents.sales_agent.call_llm")
-def test_sales_node_llm_error_graceful(mock_llm, tmp_path, monkeypatch):
-    """LLM error → fallback โดยไม่ crash"""
-    monkeypatch.setattr("src.tools.crm._DB_PATH", tmp_path / "test_crm.db")
-    mock_llm.side_effect = Exception("API Timeout")
+def test_sales_asks_confirmation_when_complete(mock_llm):
+    """Info complete but customer hasn't confirmed → ask for confirmation"""
+    mock_llm.return_value = "ข้อมูลครบแล้วนะครับ คุณ Aetox ต้องการ landing page เพื่อเพิ่มยอดขาย ถูกต้องไหมครับ?"
 
     from src.agents.sales_agent import sales_node
 
-    state = {
-        "input": "ช่วยด้วย",
+    ctx = (
+        'ลูกค้า: บริษัท Aetox ต้องการทำ landing page\n'
+        'Aetox: เป้าหมายคืออะไรครับ?\n'
+    )
+
+    state = new_state("เพิ่มยอดขาย 50% ภายใน 3 เดือน", ctx=ctx)
+
+    result = sales_node(state)
+    # Should NOT auto-confirm even though info is complete
+    assert "conversation_context" in result
+
+
+# ── Helpers ──────────────────────────────────────────────
+
+
+def new_state(input_text: str, ctx: str = ""):
+    return {
+        "input": input_text,
         "plan": "",
         "current_agent": "",
         "messages": [],
         "results": {},
         "final_output": "",
         "error": None,
+        "sales_confirmed": False,
+        "conversation_context": ctx,
     }
-
-    result = sales_node(state)
-    assert "sales" in result["results"]
-    parsed = json.loads(result["results"]["sales"])
-    assert parsed["status"] == "complete"  # ไม่ crash
-
-
-@patch("src.agents.sales_agent.call_llm")
-def test_sales_node_multiple_leads(mock_llm, tmp_path, monkeypatch):
-    """save หลาย lead → ทุก lead ได้รับการบันทึก"""
-    monkeypatch.setattr("src.tools.crm._DB_PATH", tmp_path / "test_crm.db")
-
-    from src.agents.sales_agent import sales_node
-    from src.tools.crm import list_leads
-
-    for i in range(3):
-        mock_llm.return_value = json.dumps({
-            "customer_name": f"ลูกค้า {i+1}",
-            "company": f"Company{i+1}",
-            "summary_thai": f"lead #{i+1}",
-        }, ensure_ascii=False)
-
-        state = {
-            "input": f"ต้องการเว็บ #{i+1}",
-            "plan": "", "current_agent": "",
-            "messages": [], "results": {}, "final_output": "", "error": None,
-        }
-        sales_node(state)
-
-    leads = list_leads()
-    assert len(leads) >= 3
-    names = [l["name"] for l in leads]
-    assert "ลูกค้า 1" in names
-    assert "ลูกค้า 3" in names

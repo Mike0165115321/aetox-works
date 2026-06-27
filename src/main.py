@@ -19,6 +19,8 @@ def main(mode: str = "pipeline"):
         "results": {},
         "final_output": "",
         "error": None,
+        "sales_confirmed": False,
+        "conversation_context": "",
     })
     
     print("=" * 60)

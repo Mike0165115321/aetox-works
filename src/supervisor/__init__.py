@@ -8,13 +8,16 @@ import operator
 
 class AgentState(TypedDict):
     """สถานะของระบบ — ใช้ shared state ทั่วทั้ง graph"""
-    input: str                          # คำสั่งเริ่มต้นจากผู้ใช้
+    input: str                          # คำสั่ง/ข้อความจากผู้ใช้ (รอบปัจจุบัน)
     plan: str                           # แผนการทำงาน
     current_agent: str                  # agent ที่กำลังทำงาน
     messages: Annotated[list, operator.add]  # ประวัติการสนทนา
     results: dict                       # ผลลัพธ์จากแต่ละ agent
-    final_output: str                   # ผลลัพธ์final
+    final_output: str                   # ผลลัพธ์ final
     error: str | None                   # ข้อผิดพลาด
+    # ── Sales Agent controls ──
+    sales_confirmed: bool               # ลูกค้ายืนยันดำเนินการต่อ? (Sales → Research gate)
+    conversation_context: str           # ประวัติบทสนทนาทั้งหมด (สำหรับ multi-turn)
 
 
 # Agent types ที่ระบบรองรับ
