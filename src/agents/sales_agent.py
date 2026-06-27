@@ -15,6 +15,7 @@ Aetox Works — Sales Agent 🗣️ (v3 — Notebook + Handoff)
 import logging
 import json
 import re
+from copy import deepcopy
 
 from src.supervisor import AgentState
 from src.config.agent_configs import get_system_prompt, get_output_format
@@ -55,7 +56,7 @@ def _extract_json(text: str) -> dict:
 
 def _parse_conversation(context: str) -> dict:
     """Parse conversation history → extract what's been collected so far"""
-    data = dict(SALES_JSON_SCHEMA)
+    data = deepcopy(SALES_JSON_SCHEMA)
 
     if not context:
         return data
@@ -118,7 +119,7 @@ def _load_notebook_from_disk(nb_id: str) -> dict | None:
         if not content:
             return None
         # Parse markdown back to notebook dict (basic extraction)
-        nb = dict(EMPTY_NOTEBOOK)
+        nb = _new_notebook()
         nb["_nb_id"] = nb_id
 
         # Extract customer info
@@ -149,9 +150,14 @@ EMPTY_NOTEBOOK = {
 }
 
 
+def _new_notebook() -> dict:
+    """Return a fresh notebook without sharing nested lists/dicts."""
+    return deepcopy(EMPTY_NOTEBOOK)
+
+
 def _update_notebook(notebook: dict, collected: dict) -> dict:
     """Merge new collected data into notebook (ไม่ overwrite ของเดิม)"""
-    nb = dict(notebook) if notebook else dict(EMPTY_NOTEBOOK)
+    nb = deepcopy(notebook) if notebook else _new_notebook()
 
     # Customer info
     cust = nb.setdefault("customer", {})
@@ -216,7 +222,7 @@ def sales_node(state: AgentState) -> dict:
     """
     user_input = state.get("input", "").strip()
     conversation = state.get("conversation_context", "")
-    notebook = state.get("sales_notebook") or dict(EMPTY_NOTEBOOK)
+    notebook = deepcopy(state.get("sales_notebook") or {})
     system_prompt = get_system_prompt("sales") or _default_sales_prompt()
 
     # Get or create notebook ID (persisted via conversation_context)
@@ -229,8 +235,13 @@ def sales_node(state: AgentState) -> dict:
             create_notebook(nb_id)
         except Exception as e:
             log.warning("Sales notebook create error: %s", e)
+    elif not notebook:
+        loaded = _load_notebook_from_disk(nb_id)
+        if loaded:
+            notebook = loaded
 
-    notebook = state.get("sales_notebook") or dict(EMPTY_NOTEBOOK)
+    if not notebook:
+        notebook = _new_notebook()
     notebook["_nb_id"] = nb_id
 
     # Build full conversation

@@ -107,8 +107,9 @@ def pipeline_next_agent(state: AgentState) -> str:
     sales_confirmed = state.get("sales_confirmed", False)
     notebook = state.get("sales_notebook") or {}
 
-    # Sales has run already (results, notebook, or conversation exists)
-    sales_has_run = sales_done or bool(notebook) or bool(state.get("conversation_context"))
+    # Existing conversation context is input for the next sales turn, not proof
+    # that the sales node already ran in this graph invocation.
+    sales_has_run = sales_done or bool(notebook.get("_nb_id"))
 
     # If sales ran but not confirmed → STOP (don't loop back to sales)
     if sales_has_run and not sales_confirmed:
