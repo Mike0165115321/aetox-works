@@ -142,7 +142,7 @@ async function send(){
     const d=await r.json();typingEl.remove();
     if(d.status!=='success'){addMsg('Sorry, system error','other');toggleSend(false);inp.focus();return}
     ctx=d.conversation_context||'';
-    if(d.sales_confirmed){addResult(d)}else{const reply=ctx.split('\nAetox: ').pop()||'';if(reply)addMsg(reply,'other')}
+    if(d.sales_confirmed){addResult(d)}else{const reply=ctx.replace(/\[NB:\w+\]\n?/g,'').split('\nAetox: ').pop()||'';if(reply)addMsg(reply,'other')}
   }catch(e){typingEl.remove();addMsg('Connection error','other')}
   toggleSend(false);inp.focus()
 }

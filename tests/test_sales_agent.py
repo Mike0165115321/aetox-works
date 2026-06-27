@@ -104,8 +104,9 @@ def test_sales_confirmation(mock_llm, tmp_path, monkeypatch):
 
     from src.agents.sales_agent import sales_node
 
-    # Include JSON data in context so _parse_conversation can extract it
+    # Include [NB:xxx] marker in context so notebook persists
     ctx = (
+        '[NB:test123]\n'
         'ลูกค้า: ช่วยทำเว็บ\n'
         'Aetox: บริษัทชื่ออะไรครับ?\n'
         'ลูกค้า: Aetox\n'

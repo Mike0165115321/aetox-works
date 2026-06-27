@@ -95,7 +95,52 @@ def _is_info_complete(data: dict) -> bool:
     return has_identity and has_needs and has_goals
 
 
-# Notebook template
+def _extract_nb_id(context: str) -> str:
+    """Extract notebook ID from conversation_context marker"""
+    import re
+    m = re.search(r"\[NB:(\w+)\]", context)
+    return m.group(1) if m else ""
+
+
+def _embed_nb_id(context: str, nb_id: str) -> str:
+    """Embed notebook ID into conversation_context so it persists across requests"""
+    # Remove old marker if exists, then prepend new one
+    import re
+    clean = re.sub(r"\[NB:\w+\]\n?", "", context)
+    return f"[NB:{nb_id}]\n{clean}" if nb_id else clean
+
+
+def _load_notebook_from_disk(nb_id: str) -> dict | None:
+    """Try to reconstruct notebook from .md file on disk"""
+    try:
+        from src.tools.notebook import read_notebook
+        content = read_notebook(nb_id)
+        if not content:
+            return None
+        # Parse markdown back to notebook dict (basic extraction)
+        nb = dict(EMPTY_NOTEBOOK)
+        nb["_nb_id"] = nb_id
+
+        # Extract customer info
+        import re
+        name_m = re.search(r"\|\s*Name\s*\|\s*(.+?)\s*\|", content)
+        if name_m and name_m.group(1).strip(): nb["customer"]["name"] = name_m.group(1).strip()
+        comp_m = re.search(r"\|\s*Company\s*\|\s*(.+?)\s*\|", content)
+        if comp_m and comp_m.group(1).strip(): nb["customer"]["company"] = comp_m.group(1).strip()
+
+        # Extract business info
+        for field in ("pain_points", "needs", "goals"):
+            section = re.search(rf"### {field.replace('_',' ').title()}\n(.*?)(?=\n###|\n---|\Z)", content, re.DOTALL)
+            if section:
+                items = re.findall(r"- (.+)", section.group(1))
+                nb["business"][field] = [i.strip() for i in items if i.strip()]
+
+        timeline_m = re.search(r"### Timeline\n- (.+)", content)
+        if timeline_m: nb["business"]["timeline"] = timeline_m.group(1).strip()
+
+        return nb
+    except Exception:
+        return None
 EMPTY_NOTEBOOK = {
     "customer": {"name": "", "company": "", "contact": ""},
     "business": {"pain_points": [], "needs": [], "goals": [], "timeline": "", "budget_hint": ""},
@@ -174,17 +219,19 @@ def sales_node(state: AgentState) -> dict:
     notebook = state.get("sales_notebook") or dict(EMPTY_NOTEBOOK)
     system_prompt = get_system_prompt("sales") or _default_sales_prompt()
 
-    # Get or create notebook ID (temp until confirmed)
-    nb_id = notebook.get("_nb_id")
+    # Get or create notebook ID (persisted via conversation_context)
+    nb_id = _extract_nb_id(state.get("conversation_context", ""))
     if not nb_id:
         import time
-        nb_id = str(int(time.time() * 1000))[-8:]  # short timestamp-based ID
-        notebook["_nb_id"] = nb_id
+        nb_id = str(int(time.time() * 1000))[-8:]
+        log.info("Sales notebook created: %s", nb_id)
         try:
             create_notebook(nb_id)
-            log.info("Sales notebook created: %s", nb_id)
         except Exception as e:
             log.warning("Sales notebook create error: %s", e)
+
+    notebook = state.get("sales_notebook") or dict(EMPTY_NOTEBOOK)
+    notebook["_nb_id"] = nb_id
 
     # Build full conversation
     if conversation:
@@ -236,9 +283,10 @@ def sales_node(state: AgentState) -> dict:
     # Log Sales reply to notebook
     update_notebook(nb_id, "log", f"Aetox: {reply[:200]}")
 
+    ctx_with_id = _embed_nb_id(f"{full_context}\nAetox: {reply}", nb_id)
     return {
         "results": {},
-        "conversation_context": f"{full_context}\nAetox: {reply}",
+        "conversation_context": ctx_with_id,
         "sales_notebook": notebook,
         "handoff_brief": {},
         "messages": [("system", f"Sales: {reply[:150]}")],
@@ -327,7 +375,7 @@ def _handle_confirmation_v3(state: AgentState, notebook: dict, context: str, nb_
 
     return {
         "results": {"sales": sales_output},
-        "conversation_context": f"{context}\nAetox: {confirm_msg}",
+        "conversation_context": _embed_nb_id(f"{context}\nAetox: {confirm_msg}", nb_id),
         "sales_notebook": notebook,
         "handoff_brief": handoff,
         "messages": [("system", f"Sales CONFIRMED: lead #{lead_id}, notebook locked, handoff ready")],
